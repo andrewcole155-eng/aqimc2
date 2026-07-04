@@ -179,9 +179,6 @@ def parse_latest_run_logic(logs):
     last_run_str = "Unknown"
     neo4j_status = "Unknown" 
     
-    # Default Ghost State
-    ghost_regime = {"Long": True, "Short": True, "Long_MA": "0.0%", "Short_MA": "0.0%"}
-    
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
     conf_pattern = re.compile(r'Conf:\s*([\d\.]+)%?')
     
@@ -1614,68 +1611,22 @@ with tab1:
 
     st.divider()
 
-    # --- UPGRADED: DYNAMIC GHOST THROTTLES ---
-    st.markdown("#### 🚦 Ghost Engine Capital Throttles")
-    c_light1, c_light2, _spacer2 = st.columns([2, 2, 6])
-    
-    def calculate_display_multiplier(ema):
-        if ema >= 0.015: return 1.15
-        elif ema >= -0.01: return 1.0
-        else: return max(0.0, 1.0 + (ema / 0.05))
+    # Evaluate alerts
+    alerts = generate_tactical_alerts(roll_df, st.session_state.get('global_metrics', {}), margin_util, phys_df)
+    transmit_directives_to_agent(phys_df, roll_df, macro_frozen=macro_frozen)
 
-    ghost_history = bot_state.get('ghost_history', {'long': [], 'short': []})
-    
-    long_ema, long_mult = 0.0, 1.0
-    if len(ghost_history['long']) > 0:
-        long_series = pd.Series(ghost_history['long'])
-        long_ema = float(long_series.ewm(span=9, adjust=False).mean().iloc[-1])
-        long_mult = calculate_display_multiplier(long_ema)
-        
-    long_color = "🟢 Full Flow" if long_mult >= 1.0 else ("🟡 Throttled" if long_mult > 0 else "🔴 Gates Closed")
-    
-    short_ema, short_mult = 0.0, 1.0
-    if len(ghost_history['short']) > 0:
-        short_series = pd.Series(ghost_history['short'])
-        short_ema = float(short_series.ewm(span=9, adjust=False).mean().iloc[-1])
-        short_mult = calculate_display_multiplier(short_ema)
-        
-    short_color = "🟢 Full Flow" if short_mult >= 1.0 else ("🟡 Throttled" if short_mult > 0 else "🔴 Gates Closed")
-    
-    c_light1.metric("Long Alloc.", f"{long_mult:.2f}x", f"EMA: {long_ema:.2%} | {long_color}", delta_color="off")
-    c_light2.metric("Short Alloc.", f"{short_mult:.2f}x", f"EMA: {short_ema:.2%} | {short_color}", delta_color="off")
-
-    # Extract Ghost Engine Allocations to dynamically break deadlocks
-    ghost_long_healthy = long_mult >= 1.0
-    ghost_short_healthy = short_mult >= 1.0
-
-# Evaluate alerts (must happen after phys_df and roll_df are generated globally)
-alerts = generate_tactical_alerts(roll_df, st.session_state.get('global_metrics', {}), margin_util, phys_df)
-
-cvar_sharpe_crash_active = any("Sharpe is weak" in a['title'] or "PANIC / SHOCK" in a['title'] for a in alerts)
-
-if cvar_sharpe_crash_active and (ghost_long_healthy or ghost_short_healthy):
-    macro_frozen = False
-    alerts.append({
-        "level": "success", 
-        "icon": "🔄", 
-        "title": "Autonomous Latch Unlocked", 
-        "action": "Live Sharpe is stalled due to inactivity, but Ghost Engine EMAs confirm edge recovery. Overriding live restrictions."
-    })
-
-transmit_directives_to_agent(phys_df, roll_df, macro_frozen=macro_frozen)
-
-if alerts:
-    st.markdown("### ⚡ Active System Overrides")
-    for alert in alerts:
-        msg = f"**{alert['title']}** — {alert['action']}"
-        if alert['level'] == "error":
-            st.error(f"{alert['icon']} {msg}")
-        elif alert['level'] == "warning":
-            st.warning(f"{alert['icon']} {msg}")
-        elif alert['level'] == "success": 
-            st.success(f"{alert['icon']} {msg}") 
-        else:
-            st.info(f"{alert['icon']} {msg}")
+    if alerts:
+        st.markdown("### ⚡ Active System Overrides")
+        for alert in alerts:
+            msg = f"**{alert['title']}** — {alert['action']}"
+            if alert['level'] == "error":
+                st.error(f"{alert['icon']} {msg}")
+            elif alert['level'] == "warning":
+                st.warning(f"{alert['icon']} {msg}")
+            elif alert['level'] == "success": 
+                st.success(f"{alert['icon']} {msg}") 
+            else:
+                st.info(f"{alert['icon']} {msg}")
     st.divider()
 
 # --- PENDING / STUCK ORDER ALERTS ---
@@ -1699,15 +1650,6 @@ if isinstance(orders, list):
                     st.info(f"🔄 **Transmitting:** {side_str} {qty_str} {sym_str} (Routing to market: {int(seconds_open)}s ago)")
             except Exception:
                 pass
-    
-    # --- NEW: GHOST ENGINE SAFETY LATCH VISUALIZATION ---
-    if long_mult == 0.0 or short_mult == 0.0:
-        st.markdown("""
-        <div style="background-color: rgba(255, 75, 75, 0.1); border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 4px; margin-top: 15px; margin-bottom: 15px;">
-            <strong style="color: #ff4b4b; font-size: 1.1em;">🛡️ SAFETY LATCH ENGAGED: Live Execution Severed</strong><br>
-            <span style="color: #cccccc; font-size: 0.9em;">The Ghost Engine has dropped the system into simulation mode. Below is the telemetry confirming structural edge decay, justifying the capital freeze.</span>
-        </div>
-        """, unsafe_allow_html=True)
         
         # Calculate Average IRs across the Swarm
         if model_health:
