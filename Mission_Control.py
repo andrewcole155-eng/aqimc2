@@ -267,17 +267,6 @@ def parse_latest_run_logic(logs):
             except Exception:
                 pass
 
-        # --- EXTRACT GHOST REGIME ---
-        if "GHOST REGIME |" in line and ghost_regime["Long_MA"] == "0.0%":
-            try:
-                long_part = line.split("|")[1]
-                short_part = line.split("|")[2]
-                ghost_regime["Long_MA"] = re.search(r'Long MA:\s*(.*?)\s*\(', long_part).group(1)
-                ghost_regime["Long"] = "True" in long_part
-                ghost_regime["Short_MA"] = re.search(r'Short MA:\s*(.*?)\s*\(', short_part).group(1)
-                ghost_regime["Short"] = "True" in short_part
-            except Exception: pass
-
         # --- UPGRADED ROBUST NEURAL CONVICTION SCRAPER ---
         all_tags = re.findall(r'\[([A-Z]+)\]', line)
         valid_tickers = [tag for tag in all_tags if tag not in ignore_tags and tag != 'GHOST']
@@ -344,7 +333,7 @@ def parse_latest_run_logic(logs):
     final_conviction = {k: v for k, v in neural_conviction.items() if v["Confidence"] > 0}
     unique_watchlist = {v['Ticker']:v for v in watchlist}.values()
     
-    return last_run_str, last_run_timestamp, signals, list(unique_watchlist), final_conviction, ghost_regime, model_health, neo4j_status
+    return last_run_str, last_run_timestamp, signals, list(unique_watchlist), final_conviction, model_health, neo4j_status
 
 @st.cache_data(ttl=300)
 def get_market_benchmark():
@@ -1363,9 +1352,9 @@ if account:
     
     # Process Logs
     logs = read_bot_logs()
-    # Unpack the correct 8 variables to align memory state
-    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, ghost_regime, model_health, neo4j_status = parse_latest_run_logic(logs)
-    
+    # Unpack the correct variables to align memory state
+    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs)
+
     # --- NEW: WEEKEND PERSISTENCE MEMORY ---
     if conviction_data and len(conviction_data) > 0:
         st.session_state['saved_conviction'] = conviction_data
@@ -1486,11 +1475,10 @@ margin_util = (maint_margin / equity_val * 100) if equity_val > 0 else 0.0
 # =====================================================================
 # 2. MAIN TABS
 # =====================================================================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab5, tab6 = st.tabs([
     "🧠 Bot Logic & Positions", 
     "📜 Raw Logs", 
     "📈 Real Performance", 
-    "👻 Ghost Performance", 
     "🌌 Phase Space",
     "🧬 Model Lifecycle"
 ])
@@ -2651,186 +2639,6 @@ with tab3:
 
     else:
         st.write("No history data available yet.")
-
-with tab4:
-    st.markdown("### 👻 Decoupled Ghost Engine Performance")
-    st.caption("Visualizes the continuous edge of the system (blending Live and Virtual trades) to determine market regime safety.")
-    
-    ghost_history = bot_state.get('ghost_history', {'long': [], 'short': []})
-    
-    c_g1, c_g2 = st.columns(2)
-    
-    with c_g1:
-        st.markdown("#### 🟢 Long System Edge")
-        long_hist = ghost_history.get('long', [])
-        if long_hist:
-            # Calculate Moving Average
-            long_ma = sum(long_hist[-5:]) / min(5, len(long_hist))
-            st.metric("Long Edge EMA (9-Period)", f"{long_ema*100:.2f}%", 
-                  delta="LIVE (GATES OPEN)" if long_mult > 0 else "SIMULATION (BLOCKED)", 
-                  delta_color="normal" if long_mult > 0 else "inverse")
-
-            # Plot Cumulative Ghost PnL
-            long_cum = np.cumsum(long_hist) * 100
-            fig_g_long = px.line(x=range(1, len(long_cum)+1), y=long_cum, markers=True)
-            fig_g_long.update_traces(line_color='#00ff41', marker=dict(size=8))
-            fig_g_long.update_layout(
-                xaxis_title="Recent Trades (Live + Virtual)", yaxis_title="Cumulative Edge PnL (%)", 
-                template="plotly_dark", height=350, margin=dict(l=0, r=0, t=30, b=0),
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
-            )
-            fig_g_long.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
-            st.plotly_chart(fig_g_long, width='stretch')
-        else:
-            st.info("No Long edge history available yet.")
-
-    with c_g2:
-        st.markdown("#### 🔴 Short System Edge")
-        short_hist = ghost_history.get('short', [])
-        if short_hist:
-            short_ma = sum(short_hist[-5:]) / min(5, len(short_hist))
-            st.metric("Short Edge EMA (9-Period)", f"{short_ema*100:.2f}%", 
-                  delta="LIVE (GATES OPEN)" if short_mult > 0 else "SIMULATION (BLOCKED)", 
-                  delta_color="normal" if short_mult > 0 else "inverse")
-
-            # Plot Cumulative Ghost PnL
-            short_cum = np.cumsum(short_hist) * 100
-            fig_g_short = px.line(x=range(1, len(short_cum)+1), y=short_cum, markers=True)
-            fig_g_short.update_traces(line_color='#ff4b4b', marker=dict(size=8))
-            fig_g_short.update_layout(
-                xaxis_title="Recent Trades (Live + Virtual)", yaxis_title="Cumulative Edge PnL (%)", 
-                template="plotly_dark", height=350, margin=dict(l=0, r=0, t=30, b=0),
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
-            )
-            fig_g_short.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
-            st.plotly_chart(fig_g_short, width='stretch')
-        else:
-            st.info("No Short edge history available yet.")
-
-        # --- NEW: ACTIVE GHOST POSITIONS (LIVE TRACKING) ---
-        st.divider()
-        st.markdown("### 🪂 Active Ghost Positions")
-        st.caption("Live tracking of currently simulated trades. Separated by bias to isolate lagging models.")
-
-        ghost_positions = bot_state.get('ghost_positions', {})
-        if ghost_positions:
-            # 1. Fetch live prices via Alpaca to calculate real-time virtual PnL
-            ghost_tickers = list(ghost_positions.keys())
-            live_prices = {}
-            try:
-                snapshots = api.get_snapshots(ghost_tickers)
-                for t, snap in snapshots.items():
-                    if snap and snap.latest_trade:
-                        live_prices[t] = float(snap.latest_trade.p)
-            except Exception as e:
-                st.warning(f"Could not fetch live prices for virtual PnL: {e}")
-
-            # 2. Build the data matrix
-            g_data = []
-            for ticker, info in ghost_positions.items():
-                entry_price = float(info.get('entry_price', 0.0))
-                side = info.get('side', 'long').lower()
-                current_price = live_prices.get(ticker, entry_price)
-
-                # Calculate floating PnL and simulated journey
-                estimated_atr = 0.03 # Fallback aligning with trading agent's 3% floor
-                dyn_sl, dyn_tp = estimated_atr * 2.0, estimated_atr * 3.0
-
-                if entry_price > 0:
-                    if side == 'long':
-                        pnl_pct = ((current_price - entry_price) / entry_price) * 100
-                        sl, tp = entry_price * (1 - dyn_sl), entry_price * (1 + dyn_tp)
-                        progress = max(0.0, min(1.0, (current_price - sl) / (tp - sl)))
-                    else:
-                        pnl_pct = ((entry_price - current_price) / entry_price) * 100
-                        sl, tp = entry_price * (1 + dyn_sl), entry_price * (1 - dyn_tp)
-                        progress = max(0.0, min(1.0, (sl - current_price) / (sl - tp)))
-                else:
-                    pnl_pct = 0.0
-                    progress = 0.5
-
-                g_data.append({
-                    "Ticker": ticker,
-                    "Side": side.upper(),
-                    "Virtual Entry": entry_price,
-                    "Live Price": current_price,
-                    "P/L (%)": pnl_pct,
-                    "Journey": progress
-                })
-
-            df_g = pd.DataFrame(g_data)
-
-            # --- VISUAL UPGRADE 1: Diverging PnL Bar Chart ---
-            st.markdown("#### 📊 Virtual P/L Distribution")
-            
-            # Sort values so the worst performers (lagging shorts) cluster visibly
-            df_g_sorted = df_g.sort_values("P/L (%)", ascending=True)
-            
-            fig_g_bar = px.bar(
-                df_g_sorted, 
-                x="P/L (%)", 
-                y="Ticker", 
-                orientation="h", 
-                color="Side",
-                color_discrete_map={"LONG": "rgba(0, 255, 65, 0.7)", "SHORT": "rgba(255, 75, 75, 0.7)"},
-                text_auto=".2f"
-            )
-            
-            fig_g_bar.add_vline(x=0, line_dash="dash", line_color="white", opacity=0.5)
-            fig_g_bar.update_traces(textposition="outside", textfont=dict(color="#fff"))
-            fig_g_bar.update_layout(
-                height=max(200, len(df_g) * 35), # Dynamically scale height based on position count
-                margin=dict(l=0, r=0, t=10, b=0),
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="#cccccc"),
-                xaxis_title="Simulated P/L (%)",
-                yaxis_title=None,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=None)
-            )
-            st.plotly_chart(fig_g_bar, width='stretch')
-
-            # --- VISUAL UPGRADE 2: Split Dataframes ---
-            col_l, col_s = st.columns(2)
-            
-            with col_l:
-                st.markdown("##### 🟢 Long Candidates")
-                df_long = df_g[df_g['Side'] == 'LONG'].drop(columns=['Side'])
-                if not df_long.empty:
-                    st.dataframe(
-                        df_long,
-                        width='stretch',
-                        column_config={
-                            "Virtual Entry": st.column_config.NumberColumn(format="$%.2f"),
-                            "Live Price": st.column_config.NumberColumn(format="$%.2f"),
-                            "P/L (%)": st.column_config.NumberColumn(format="%.2f%%"),
-                            "Journey": st.column_config.ProgressColumn("Journey to TP", min_value=0.0, max_value=1.0, format="%.2f"),
-                        },
-                        hide_index=True
-                    )
-                else:
-                    st.caption("No active virtual longs.")
-
-            with col_s:
-                st.markdown("##### 🔴 Short Candidates")
-                df_short = df_g[df_g['Side'] == 'SHORT'].drop(columns=['Side'])
-                if not df_short.empty:
-                    st.dataframe(
-                        df_short,
-                        width='stretch',
-                        column_config={
-                            "Virtual Entry": st.column_config.NumberColumn(format="$%.2f"),
-                            "Live Price": st.column_config.NumberColumn(format="$%.2f"),
-                            "P/L (%)": st.column_config.NumberColumn(format="%.2f%%"),
-                            "Journey": st.column_config.ProgressColumn("Journey to TP", min_value=0.0, max_value=1.0, format="%.2f"),
-                        },
-                        hide_index=True
-                    )
-                else:
-                    st.caption("No active virtual shorts.")
-
-        else:
-            st.info("No active virtual positions currently tracked.")
 
 with tab5:
     # Calculate required data for charts upfront
