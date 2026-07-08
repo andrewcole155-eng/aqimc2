@@ -179,7 +179,7 @@ def parse_latest_run_logic(logs):
     neo4j_status = "Unknown" 
     
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
-    conf_pattern = re.compile(r'Conf:\s*([\d\.]+)%?')
+    conf_pattern = re.compile(r'Conf:?\s*([\d\.]+)%?')
     
     ignore_tags = {'INFO', 'WARNING', 'ERROR', 'CRITICAL', 'DEBUG'}
     action_map = {"0": "HOLD", "1": "LONG", "2": "SHORT", "3": "CLOSE"}
@@ -273,6 +273,8 @@ def parse_latest_run_logic(logs):
             conf_match = conf_pattern.search(line)
             line_conf = float(conf_match.group(1)) if conf_match else 0.0
             if line_conf > 0 and neural_conviction[ticker]["Confidence"] == 0.0:
+                if line_conf <= 1.0:
+                    line_conf *= 100.0
                 neural_conviction[ticker]["Confidence"] = line_conf
                 
             # 3. Accumulate Action
