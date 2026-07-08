@@ -168,8 +168,7 @@ def parse_latest_run_logic(logs):
     1. Signals (Decisions)
     2. Watchlist (High potential)
     3. Neural Conviction (Latest confidence score and Action)
-    4. Ghost Regime Status
-    5. Model Health Metrics (Decay & Edge)
+    4. Model Health Metrics (Decay, Edge, and Lifecycle)
     """
     signals = {}
     watchlist = [] 
@@ -225,14 +224,9 @@ def parse_latest_run_logic(logs):
                         raw_base_ir = float(parts[1].split(":")[1].strip()) if "Base IR" in parts[1] else 0.0
                         live_ir = float(parts[2].split(":")[1].strip()) if "Live IR" in parts[2] else 0.0
                         
-                        # Automated Override 
-                        if "DEGRADED" in status_clean or raw_base_ir < 0:
-                            base_ir = max(0.35, live_ir + 0.10)
-                            status_clean = "STABLE" 
-                            decay_val = 0.85        
-                        else:
-                            base_ir = raw_base_ir
-                            decay_val = float(parts[3].split(":")[1].strip()) if "Decay" in parts[3] else 1.0
+                        # REMOVED AUTOMATED OVERRIDE - Mission Control must display absolute reality
+                        base_ir = raw_base_ir
+                        decay_val = float(parts[3].split(":")[1].strip()) if "Decay" in parts[3] else 1.0
                         
                         mdd_match = re.search(r"(\d+)d", parts[4]) if len(parts) > 4 else None
                         mdd_val = int(mdd_match.group(1)) if mdd_match else 0
@@ -266,12 +260,12 @@ def parse_latest_run_logic(logs):
 
         # --- UPGRADED ROBUST NEURAL CONVICTION SCRAPER ---
         all_tags = re.findall(r'\[([A-Z]+)\]', line)
-        valid_tickers = [tag for tag in all_tags if tag not in ignore_tags and tag != 'GHOST']
+        valid_tickers = [tag for tag in all_tags if tag not in ignore_tags]
         
         if valid_tickers:
             ticker = valid_tickers[-1] 
             
-            # 1. State Initializer (Create an empty holding pen for the ticker)
+            # 1. State Initializer
             if ticker not in neural_conviction:
                 neural_conviction[ticker] = {"Confidence": 0.0, "Action": ""}
                 
@@ -294,7 +288,7 @@ def parse_latest_run_logic(logs):
                 clean_msg = line.split(f"[{ticker}]")[-1].strip()
                 if "FINAL SIGNAL" in line:
                     signals[ticker] = "✅ " + clean_msg
-                elif "Forcing HOLD" in line or "Margin" in line or "GHOST GATE" in line:
+                elif "Forcing HOLD" in line or "Margin" in line:
                     signals[ticker] = "⏸️ " + clean_msg
                     if best_known_conf > 20.0: 
                         tag = "🔥 Screaming Setup" if best_known_conf > 80.0 else ("⚡ High Conviction" if best_known_conf > 40.0 else "👀 Watching")
@@ -326,7 +320,7 @@ def parse_latest_run_logic(logs):
     if not model_health and 'saved_model_health' in st.session_state:
         model_health = st.session_state['saved_model_health']
 
-    # 4. Filter out placeholder logic (Drop any generic log line that never hit a neural score)
+    # 4. Filter out placeholder logic
     final_conviction = {k: v for k, v in neural_conviction.items() if v["Confidence"] > 0}
     unique_watchlist = {v['Ticker']:v for v in watchlist}.values()
     
@@ -1164,7 +1158,7 @@ def calculate_rolling_edge(df, window=30):
     return r_df.dropna(subset=['rolling_return', 'rolling_sharpe', 'rolling_dd'])
 
 def generate_tactical_alerts(roll_df, global_metrics, margin_util, phys_df):
-    """Evaluates rolling metrics and reports active autonomous system adjustments."""
+    """Evaluates rolling metrics and reports active autonomous system adjustments aligned with ATR bounds."""
     alerts = []
     
     if roll_df.empty or len(roll_df) < 5:
@@ -1181,25 +1175,25 @@ def generate_tactical_alerts(roll_df, global_metrics, margin_util, phys_df):
         elif latest_sharpe > 1.5:
             alerts.append({"level": "success", "icon": "🟢", "title": f"Elite Edge: Sharpe is surging ({latest_sharpe:.2f})", "action": "BASE SIZING RESTORED. The regime is highly favorable. System is deploying full-lot sizes."})
 
-    # --- 2. ULCER INDEX (Defense & Stops) ---
+    # --- 2. ULCER INDEX (Defense & Monitoring) ---
     if pd.notna(latest_ulcer):
         if latest_ulcer > 4.0:
-            alerts.append({"level": "warning", "icon": "🛡️", "title": f"Pain Threshold Reached: Ulcer Index elevated ({latest_ulcer:.2f})", "action": "DEFENSIVE PROTOCOL ENGAGED. Standard stops tightened to -1.0%. Winners are being trailed to breakeven immediately."})
+            alerts.append({"level": "warning", "icon": "🛡️", "title": f"Pain Threshold Reached: Ulcer Index elevated ({latest_ulcer:.2f})", "action": "DEFENSIVE MONITORING ENGAGED. Drawdowns are elevated. Agent continues to rely on baseline 2x ATR stops."})
         elif latest_ulcer < 1.5:
-            alerts.append({"level": "success", "icon": "🕊️", "title": f"Smooth Sailing: Low Ulcer Index ({latest_ulcer:.2f})", "action": "STANDARD STOPS RESTORED. Drawdowns are minimal. Trades are operating with full -2.0% breathing room."})
+            alerts.append({"level": "success", "icon": "🕊️", "title": f"Smooth Sailing: Low Ulcer Index ({latest_ulcer:.2f})", "action": "EDGE CONFIRMED. Drawdowns are minimal. Trades are operating cleanly within standard ATR boundaries."})
 
-    # --- 3. WIN RATE (Take Profits) ---
+    # --- 3. WIN RATE (Regime Context) ---
     if pd.notna(latest_win_rate):
         if latest_win_rate < 45.0:
-            alerts.append({"level": "info", "icon": "✂️", "title": f"Choppy Execution: Win rate dropping ({latest_win_rate:.1f}%)", "action": "TARGETS FRONT-RUN. Market lacks follow-through. System is scaling out of winners early at +2.0%."})
+            alerts.append({"level": "info", "icon": "✂️", "title": f"Choppy Execution: Win rate dropping ({latest_win_rate:.1f}%)", "action": "MARKET LACKS FOLLOW-THROUGH. Execution probabilities are skewed negatively in this environment."})
         elif latest_win_rate > 55.0:
-            alerts.append({"level": "success", "icon": "🏃‍♂️", "title": f"High Hit Rate: Win rate is strong ({latest_win_rate:.1f}%)", "action": "TRAIL/HOLD ACTIVATED. Market is respecting targets. System is holding for full +4.0% Take Profit or trailing aggressively."})
+            alerts.append({"level": "success", "icon": "🏃‍♂️", "title": f"High Hit Rate: Win rate is strong ({latest_win_rate:.1f}%)", "action": "MOMENTUM CONFIRMED. Market is respecting mathematical targets efficiently."})
 
     # --- 4. MARGIN (Leverage) ---
     if margin_util > 75.0:
         alerts.append({"level": "error", "icon": "🚨", "title": f"Leverage Warning: Margin at {margin_util:.1f}%", "action": "BUYING FROZEN. Leverage limits reached. No new capital will be deployed."})
 
-    # --- 5. DYNAMIC STOP-LOSS (REGIME & TAIL AWARE) ---
+    # --- 5. MARKET PHYSICS (Tail Risk) ---
     if not phys_df.empty:
         latest_vel = phys_df['vel_smooth'].iloc[-1]
         latest_acc = phys_df['acc_smooth'].iloc[-1]
@@ -1208,10 +1202,10 @@ def generate_tactical_alerts(roll_df, global_metrics, margin_util, phys_df):
         
         # Panic Regime Detected
         if latest_vel <= 0 and latest_acc < 0:
-            alerts.append({"level": "error", "icon": "🛡️", "title": "Regime Drift: PANIC / SHOCK", "action": f"Vector field confirms downward acceleration. Expected Shortfall (CVaR) is {cvar:.2f}%. TIGHTEN HARD STOPS to -1.0% immediately to preserve capital."})
+            alerts.append({"level": "error", "icon": "🛡️", "title": "Regime Drift: PANIC / SHOCK", "action": f"Vector field confirms downward acceleration. Expected Shortfall (CVaR) is {cvar:.2f}%. Trading Agent active regime flag synced."})
         # Extreme Stretching
         elif latest_dfe > 2.5:
-            alerts.append({"level": "warning", "icon": "⚠️", "title": f"Extreme Phase Stretch (DFE: {latest_dfe:.2f})", "action": "System is highly extended from equilibrium. Mean-reversion shock probability is elevated. Trail winners tightly."})
+            alerts.append({"level": "warning", "icon": "⚠️", "title": f"Extreme Phase Stretch (DFE: {latest_dfe:.2f})", "action": "System is highly extended from equilibrium. Mean-reversion shock probability is elevated."})
 
     return alerts
 
@@ -1287,11 +1281,7 @@ def format_log_line(line):
         clean_line
     )
 
-    # 5. Colorize Ghost Trading Tags
-    clean_line = clean_line.replace("[GHOST]", '<span style="color: #c586c0; font-weight: bold;">[GHOST]</span>')
-    clean_line = clean_line.replace("🚦 GHOST GATE", '<span style="color: #ffb000; font-weight: bold;">🚦 GHOST GATE</span>')
-    
-    # 6. Colorize Neo4j and STGNN/Quantum Features
+    # 5. Colorize Neo4j and STGNN/Quantum Features
     clean_line = clean_line.replace("[Neo4j]", '<span class="log-neo4j">[Neo4j]</span>')
     clean_line = clean_line.replace("✨", '<span class="log-stgnn">✨</span>')
 
