@@ -1672,7 +1672,7 @@ if isinstance(orders, list):
     
     # Calculate exactly how much cash is locked in positions
     active_capital = sum([abs(float(p['market_value'])) for p in positions]) if positions else 0.0
-    cash_capital = equity - active_capital  # <-- Uses the corrected cash calculation
+    cash_capital = equity_val - active_capital  # <-- FIX: Standardized to safe equity_val
     total_capital = active_capital + cash_capital
     
     # Calculate percentages
@@ -1783,9 +1783,14 @@ if isinstance(orders, list):
 
             st.divider()
             
+            st.divider()
+            
             st.markdown("#### Margin Distance")
             maint_margin = float(account.get('maintenance_margin', 0)) if account else 0.0
-            margin_util = (maint_margin / equity * 100) if equity > 0 else 0.0
+            
+            # FIX: Standardized to safe equity_val to prevent NameError
+            margin_util = (maint_margin / equity_val * 100) if equity_val > 0 else 0.0
+            
             st.progress(int(max(0, min(100, margin_util))), text=f"Margin Capacity Used: {margin_util:.1f}%")
             if margin_util > 80:
                 st.error("⚠️ CRITICAL: Approaching Maintenance Margin Call!")
@@ -1864,7 +1869,6 @@ if isinstance(orders, list):
         st.subheader("💼 Capital & Active Portfolio")
         
         # --- UPGRADED: CAPITAL ALLOCATION DONUT CHART ---
-        # Uses the 'cash_capital' calculated at the top of Tab 1 (fixes the 78% bug)
         allocation_data = [{"Asset": "CASH", "Value": cash_capital}]
         for p in positions:
             allocation_data.append({"Asset": p['symbol'], "Value": abs(float(p['market_value']))})
@@ -1880,12 +1884,17 @@ if isinstance(orders, list):
                 font={'color': '#cccccc'}, showlegend=True,
                 legend=dict(orientation="v", yanchor="auto", y=0.5, xanchor="left", x=1.0)
             )
-            fig_alloc.add_annotation(text=f"Total Eq<br>${equity:,.0f}", x=0.5, y=0.5, font_size=14, showarrow=False)
+            
+            # FIX: Standardized to safe equity_val
+            fig_alloc.add_annotation(text=f"Total Eq<br>${equity_val:,.0f}", x=0.5, y=0.5, font_size=14, showarrow=False)
             st.plotly_chart(fig_alloc, width='stretch')
             
             # --- ADDED: NEXT SLOT DEPLOYMENT ESTIMATE ---
             monitored_tickers = ['IONQ', 'KO', 'OXY', 'BAC', 'GM', 'PFE', 'PYPL', 'FCX','SOFI','T','F','CCL']
-            est_slot_size = equity / len(monitored_tickers)
+            
+            # FIX: Standardized to safe equity_val
+            est_slot_size = equity_val / len(monitored_tickers) if len(monitored_tickers) > 0 else 0.0
+            
             st.caption(f"🤖 **Bot Pre-Auth:** Estimated next trade size is **~${est_slot_size:,.2f}** per signal.")
             
             # --- ADDED: SECTOR / INDEX EXPOSURE ---
