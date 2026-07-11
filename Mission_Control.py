@@ -932,7 +932,8 @@ def generate_proxied_ppo_landscape(phys_df, log_state, conviction_data, grid_siz
     latest_jerk = abs(y_dim.iloc[-1]) if len(y_dim) > 0 else 0
     latest_vel = abs(x_dim.iloc[-1]) if len(x_dim) > 0 else 0
     
-    is_stalled = latest_vel < 0.05 and log_state.get('Total', 0) < 1
+    # FIX: Mode collapse should only trigger if the bot is actually dead (no conviction data)
+    is_stalled = latest_vel < 0.05 and len(conviction_data) == 0
     
     if is_stalled:
         # MODE COLLAPSE: Flatten surface to 0.5 (total uncertainty)
@@ -1214,7 +1215,7 @@ def generate_tactical_alerts(roll_df, global_metrics, margin_util, phys_df):
 
     return alerts
 
-def transmit_directives_to_agent(phys_df, roll_df, macro_frozen=False):
+def transmit_directives_to_agent(phys_df, roll_df):
     """Translates Streamlit math into a JSON payload and pushes to Google Sheets."""
     # 1. Default Baseline Parameters (Synced to Trading Agent capabilities)
     directives = {
@@ -1451,6 +1452,21 @@ if not hist_df_raw.empty and account:
     hist_df_adj['equity'] = hist_df_adj['equity'].fillna(true_starting_principal)
 
     # =====================================================================
+    # --- MERGE SPY BENCHMARK FOR INFORMATION RATIO ---
+    # =====================================================================
+    start_date_str = hist_df_adj['timestamp'].min().strftime('%Y-%m-%d')
+    spy_df = get_historical_spy(start_date_str)
+    
+    if not spy_df.empty:
+        # Create a timezone-naive date key for reliable merging
+        hist_df_adj['date_only'] = hist_df_adj['timestamp'].dt.tz_localize(None).dt.floor('D')
+        spy_df['date_only'] = spy_df.index
+        
+        hist_df_adj = pd.merge(hist_df_adj, spy_df, on='date_only', how='left')
+        hist_df_adj['benchmark_return'] = hist_df_adj['spy_return'].fillna(0.0)
+        hist_df_adj.drop(columns=['date_only', 'spy_return'], inplace=True)
+
+    # =====================================================================
     # --- PRE-CALCULATE METRICS ---
     # =====================================================================
     st.session_state['global_metrics'] = calculate_advanced_metrics(hist_df_adj)
@@ -1474,9 +1490,6 @@ tab1, tab2, tab3, tab5, tab6 = st.tabs([
     "🌌 Phase Space",
     "🧬 Model Lifecycle"
 ])
-
-# Fetch the live state file for the Ghost tabs
-bot_state = get_bot_state()
 
 with tab1:
     # --- 1. MARKET PULSE ---
@@ -1608,7 +1621,7 @@ with tab1:
 
     # Evaluate alerts
     alerts = generate_tactical_alerts(roll_df, st.session_state.get('global_metrics', {}), margin_util, phys_df)
-    transmit_directives_to_agent(phys_df, roll_df, macro_frozen=macro_frozen)
+    transmit_directives_to_agent(phys_df, roll_df)
 
     if alerts:
         st.markdown("### ⚡ Active System Overrides")
@@ -1690,14 +1703,14 @@ if isinstance(orders, list):
     sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers)}")
 
     # --- ADDED: NEURAL SKEW / MACRO BIAS ---
-    if parsed_signals:
-        long_count = sum(1 for s in parsed_signals.values() if "Long" in s)
-        short_count = sum(1 for s in parsed_signals.values() if "Short" in s)
-        hold_count = len(parsed_signals) - long_count - short_count
+    if conviction_data:
+        long_count = sum(1 for d in conviction_data.values() if d.get("Action") == "LONG")
+        short_count = sum(1 for d in conviction_data.values() if d.get("Action") == "SHORT")
+        hold_count = len(conviction_data) - long_count - short_count
         
         st.markdown("#### ⚖️ Bot Macro Bias (Neural Skew)")
         # Normalize for progress bar (0.0 to 1.0)
-        total_signals = len(parsed_signals)
+        total_signals = len(conviction_data)
         skew_val = (long_count + (hold_count * 0.5)) / total_signals if total_signals > 0 else 0.5
         
         st.progress(int(max(0, min(100, skew_val * 100))))
@@ -1935,14 +1948,22 @@ if isinstance(orders, list):
                 # Calculate Invested Amount
                 invested_amt = entry * qty
                 
-                # Calculate Journey to TP (0.0 to 1.0) - Proxying 2x/3x ATR Matrix
-                estimated_atr = 0.03 # Fallback aligning with trading agent's 3% floor
-                dyn_sl, dyn_tp = estimated_atr * 2.0, estimated_atr * 3.0
+                # Calculate Journey to TP (0.0 to 1.0) - Exact match to Trading Agent ATR logic
+                estimated_atr = 0.03 # Fallback aligning with trading agent
+                dynamic_sl = estimated_atr * 2.0
+                dynamic_tp = estimated_atr * 3.0
+                
+                conf_sl = 0.02
+                conf_tp = 0.04
+                
+                active_sl = min(dynamic_sl, conf_sl * 1.5) 
+                active_tp = max(dynamic_tp, conf_tp)
+                
                 if side == 'long':
-                    sl, tp = entry * (1 - dyn_sl), entry * (1 + dyn_tp)
+                    sl, tp = entry * (1 - active_sl), entry * (1 + active_tp)
                     progress = max(0.0, min(1.0, (current - sl) / (tp - sl)))
                 else:
-                    sl, tp = entry * (1 + dyn_sl), entry * (1 - dyn_tp)
+                    sl, tp = entry * (1 + active_sl), entry * (1 - active_tp)
                     progress = max(0.0, min(1.0, (sl - current) / (sl - tp)))
 
                 # Calculate Days Held (Max 5)
@@ -1990,7 +2011,8 @@ if isinstance(orders, list):
             max_r, min_r = -999.0, 999.0
 
             estimated_atr = 0.03 # Fallback proxy to match Trading Agent
-            proxy_sl_pct = estimated_atr * 2.0 * 100 # Converts to 6.0%
+            dynamic_sl = estimated_atr * 2.0
+            proxy_sl_pct = min(dynamic_sl, 0.02 * 1.5) * 100 # Exact match: capped at 3.0%
 
             for p_data in pos_data:
                 # Calculate True R: (Current PnL %) / (Stop Loss %)
@@ -2633,7 +2655,7 @@ with tab5:
                 st.write("Slowing bull market. Momentum is bleeding. The vector field expects a drag toward Panic/Shock.")
             elif latest_vel <= 0 and latest_acc < 0:
                 st.error("**Current Regime: PANIC / SHOCK (Bottom Left)**")
-                st.write("Expanding bear market. High negative acceleration. Ghost Engine safety protocols should engage.")
+                st.write("Expanding bear market. High negative acceleration. Strict 2x ATR stops and baseline confidence floors will protect capital.")
             elif latest_vel <= 0 and latest_acc >= 0:
                 st.info("**Current Regime: ACCUMULATION (Top Left)**")
                 st.write("Slowing bear market. Negative returns, but the rate of decline is shrinking. Mean-reversion setups favored.")
@@ -2674,7 +2696,7 @@ with tab5:
                 st.write("The market is throwing erratic data. The AI's mental map is getting jagged and defensive, suppressing conviction peaks.")
             else:
                 st.error(f"**Topology:** {landscape_status}")
-                st.write("The AI has lost its edge. The surface has flattened completely, meaning the bot cannot distinguish a good trade from a bad one. Ghost Engine should be active.")
+                st.write("The AI has lost its edge. The surface has flattened completely, meaning the bot cannot distinguish a good trade from a bad one. Safety constraints (0.50 Confidence Floor) will block entries.")
                 
             st.divider()
             
