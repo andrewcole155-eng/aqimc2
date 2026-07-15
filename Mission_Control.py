@@ -1387,10 +1387,10 @@ if account:
     # Process Logs & JSON State
     logs = read_bot_logs()
     
-    # --- REPLACED: Fetch distributed telemetry ---
+    # --- UPGRADED: Fetch distributed telemetry ---
     trading_state, inference_state = get_cloud_telemetry() 
     
-    # Pass the INFERENCE state to the parser to rebuild the STGNN/PCA visuals
+    # Pass the INFERENCE state to the parser to rebuild the Neural/Lifecycle visuals
     last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs, inference_state)
 
     # --- NEW: WEEKEND PERSISTENCE MEMORY ---
