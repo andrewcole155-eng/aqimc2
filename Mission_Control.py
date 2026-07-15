@@ -1858,121 +1858,121 @@ if isinstance(orders, list):
     st.divider()
 
     # --- 3. MAIN COLUMNS ---
-c1, c2 = st.columns([3, 4])
+    c1, c2 = st.columns([3, 4])
 
-with c1:
-    # --- FIX: Replaced Nested Tabs with a Radio Menu ---
-    inner_nav = st.radio(
-        "Navigation",
-        ["🔭 Watchlist", "📝 Decisions", "🖥️ Risk & Telemetry", "🔪 Execution & Edge"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    st.divider()
-    
-    if inner_nav == "🔭 Watchlist":
-        if watchlist_data:
-            wl_df = pd.DataFrame(watchlist_data)
-            st.dataframe(wl_df, width='stretch', hide_index=True)
-        else:
-            st.caption("No high-confidence setups detected yet.")
-
-    elif inner_nav == "📝 Decisions":
-        if parsed_signals:
-            sig_df = pd.DataFrame(list(parsed_signals.items()), columns=["Ticker", "Decision"])
-            st.dataframe(sig_df, width='stretch', hide_index=True)
-        else:
-            st.info("No signals parsed from recent logs.")
-            
-    elif inner_nav == "🖥️ Risk & Telemetry":
-        st.markdown("#### Server & API Telemetry")
-        cpu, ram, ping = get_system_telemetry()
-        
-        t1, t2, t3 = st.columns(3)
-        t1.metric("CPU Load", f"{cpu}%", delta="High" if cpu > 80 else "Normal", delta_color="inverse")
-        t2.metric("RAM Util", f"{ram}%", delta="High" if ram > 85 else "Normal", delta_color="inverse")
-        t3.metric("API Latency", f"{ping}ms", delta="Lag" if ping > 300 else "Fast", delta_color="inverse")
-
+    with c1:
+        # --- FIX: Replaced Nested Tabs with a Radio Menu ---
+        inner_nav = st.radio(
+            "Navigation",
+            ["🔭 Watchlist", "📝 Decisions", "🖥️ Risk & Telemetry", "🔪 Execution & Edge"],
+            horizontal=True,
+            label_visibility="collapsed"
+        )
         st.divider()
         
-        st.markdown("#### Margin Distance")
-        maint_margin = float(account.get('maintenance_margin', 0)) if account else 0.0
-        
-        # FIX: Standardized to safe equity_val to prevent NameError
-        margin_util = (maint_margin / equity_val * 100) if equity_val > 0 else 0.0
-        
-        st.progress(int(max(0, min(100, margin_util))), text=f"Margin Capacity Used: {margin_util:.1f}%")
-        if margin_util > 80:
-            st.error("⚠️ CRITICAL: Approaching Maintenance Margin Call!")
+        if inner_nav == "🔭 Watchlist":
+            if watchlist_data:
+                wl_df = pd.DataFrame(watchlist_data)
+                st.dataframe(wl_df, width='stretch', hide_index=True)
+            else:
+                st.caption("No high-confidence setups detected yet.")
 
-        st.divider()
-
-        st.markdown("#### Active Position Correlation")
-        if positions and len(positions) > 1:
-            active_tickers = [p['symbol'] for p in positions]
-            corr_matrix = get_correlation_matrix(active_tickers)
+        elif inner_nav == "📝 Decisions":
+            if parsed_signals:
+                sig_df = pd.DataFrame(list(parsed_signals.items()), columns=["Ticker", "Decision"])
+                st.dataframe(sig_df, width='stretch', hide_index=True)
+            else:
+                st.info("No signals parsed from recent logs.")
+                
+        elif inner_nav == "🖥️ Risk & Telemetry":
+            st.markdown("#### Server & API Telemetry")
+            cpu, ram, ping = get_system_telemetry()
             
-            if corr_matrix is not None:
-                fig_corr = px.imshow(
-                    corr_matrix, 
-                    text_auto=".2f", 
-                    color_continuous_scale="RdBu_r", 
-                    zmin=-1, zmax=1
+            t1, t2, t3 = st.columns(3)
+            t1.metric("CPU Load", f"{cpu}%", delta="High" if cpu > 80 else "Normal", delta_color="inverse")
+            t2.metric("RAM Util", f"{ram}%", delta="High" if ram > 85 else "Normal", delta_color="inverse")
+            t3.metric("API Latency", f"{ping}ms", delta="Lag" if ping > 300 else "Fast", delta_color="inverse")
+
+            st.divider()
+            
+            st.markdown("#### Margin Distance")
+            maint_margin = float(account.get('maintenance_margin', 0)) if account else 0.0
+            
+            # FIX: Standardized to safe equity_val to prevent NameError
+            margin_util = (maint_margin / equity_val * 100) if equity_val > 0 else 0.0
+            
+            st.progress(int(max(0, min(100, margin_util))), text=f"Margin Capacity Used: {margin_util:.1f}%")
+            if margin_util > 80:
+                st.error("⚠️ CRITICAL: Approaching Maintenance Margin Call!")
+
+            st.divider()
+
+            st.markdown("#### Active Position Correlation")
+            if positions and len(positions) > 1:
+                active_tickers = [p['symbol'] for p in positions]
+                corr_matrix = get_correlation_matrix(active_tickers)
+                
+                if corr_matrix is not None:
+                    fig_corr = px.imshow(
+                        corr_matrix, 
+                        text_auto=".2f", 
+                        color_continuous_scale="RdBu_r", 
+                        zmin=-1, zmax=1
+                    )
+                    fig_corr.update_layout(
+                        height=280, 
+                        margin=dict(l=0, r=0, t=10, b=0), 
+                        paper_bgcolor='rgba(0,0,0,0)', 
+                        font={'color': '#cccccc'}
+                    )
+                    st.plotly_chart(fig_corr, width='stretch')
+            else:
+                st.caption("Need at least 2 active positions to plot correlation.")
+
+        elif inner_nav == "🔪 Execution & Edge":
+            st.markdown("#### ⚖️ Edge Quality")
+            
+            # Use session_state to prevent NameError on first load
+            global_metrics = st.session_state.get('global_metrics', {})
+            sqn_val = global_metrics.get('SQN', 0)
+            ulcer_val = global_metrics.get('Ulcer Index', 0)
+            
+            e1, e2 = st.columns(2)
+            st.markdown("#### 🎯 Excursion Analysis (MAE vs MFE)")
+            st.caption("Scatter plot of recent closed trades. Identifies if stops are too tight or winners are choked.")
+            
+            df_ex = get_trade_excursions(api, orders)
+            
+            if not df_ex.empty:
+                # 1. CREATE the figure first (with marginal histograms)
+                fig_ex = px.scatter(
+                    df_ex, x="MAE (%)", y="MFE (%)", color="Result",
+                    marginal_x="histogram", marginal_y="histogram", 
+                    hover_data=["Ticker", "PnL (%)", "Type"],
+                    color_discrete_map={"Win": "#00ff41", "Loss": "#ff4b4b"}
                 )
-                fig_corr.update_layout(
-                    height=280, 
-                    margin=dict(l=0, r=0, t=10, b=0), 
-                    paper_bgcolor='rgba(0,0,0,0)', 
-                    font={'color': '#cccccc'}
+                
+                # 2. Add your crosshairs for standard Stop Loss / Take Profit boundaries
+                fig_ex.add_vline(x=-2.0, line_dash="dash", line_color="red", annotation_text="Hard Stop (-2%)", annotation_position="top right")
+                fig_ex.add_hline(y=4.0, line_dash="dash", line_color="green", annotation_text="Standard TP (+4%)", annotation_position="bottom right")
+                
+                # 3. UPDATE the traces (targeting ONLY the scatter points)
+                fig_ex.update_traces(
+                    selector=dict(type='scatter'), 
+                    marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey'))
                 )
-                st.plotly_chart(fig_corr, width='stretch')
-        else:
-            st.caption("Need at least 2 active positions to plot correlation.")
-
-    elif inner_nav == "🔪 Execution & Edge":
-        st.markdown("#### ⚖️ Edge Quality")
-        
-        # Use session_state to prevent NameError on first load
-        global_metrics = st.session_state.get('global_metrics', {})
-        sqn_val = global_metrics.get('SQN', 0)
-        ulcer_val = global_metrics.get('Ulcer Index', 0)
-        
-        e1, e2 = st.columns(2)
-        st.markdown("#### 🎯 Excursion Analysis (MAE vs MFE)")
-        st.caption("Scatter plot of recent closed trades. Identifies if stops are too tight or winners are choked.")
-        
-        df_ex = get_trade_excursions(api, orders)
-        
-        if not df_ex.empty:
-            # 1. CREATE the figure first (with marginal histograms)
-            fig_ex = px.scatter(
-                df_ex, x="MAE (%)", y="MFE (%)", color="Result",
-                marginal_x="histogram", marginal_y="histogram", 
-                hover_data=["Ticker", "PnL (%)", "Type"],
-                color_discrete_map={"Win": "#00ff41", "Loss": "#ff4b4b"}
-            )
-            
-            # 2. Add your crosshairs for standard Stop Loss / Take Profit boundaries
-            fig_ex.add_vline(x=-2.0, line_dash="dash", line_color="red", annotation_text="Hard Stop (-2%)", annotation_position="top right")
-            fig_ex.add_hline(y=4.0, line_dash="dash", line_color="green", annotation_text="Standard TP (+4%)", annotation_position="bottom right")
-            
-            # 3. UPDATE the traces (targeting ONLY the scatter points)
-            fig_ex.update_traces(
-                selector=dict(type='scatter'), 
-                marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey'))
-            )
-            
-            # 4. Apply your layout styling
-            fig_ex.update_layout(
-                height=300, margin=dict(l=0, r=0, t=10, b=0),
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                font={'color': '#cccccc'},
-                xaxis=dict(title="Max Adverse Excursion (Pain %)", showgrid=True, gridcolor='#333', zerolinecolor='white'),
-                yaxis=dict(title="Max Favorable (Gain %)", showgrid=True, gridcolor='#333', zerolinecolor='white')
-            )
-            st.plotly_chart(fig_ex, width='stretch')
-        else:
-            st.info("Gathering excursion data. Close more trades to populate scatter plot.")
+                
+                # 4. Apply your layout styling
+                fig_ex.update_layout(
+                    height=300, margin=dict(l=0, r=0, t=10, b=0),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                    font={'color': '#cccccc'},
+                    xaxis=dict(title="Max Adverse Excursion (Pain %)", showgrid=True, gridcolor='#333', zerolinecolor='white'),
+                    yaxis=dict(title="Max Favorable (Gain %)", showgrid=True, gridcolor='#333', zerolinecolor='white')
+                )
+                st.plotly_chart(fig_ex, width='stretch')
+            else:
+                st.info("Gathering excursion data. Close more trades to populate scatter plot.")
 
     with c2:
         st.subheader("💼 Capital & Active Portfolio")
