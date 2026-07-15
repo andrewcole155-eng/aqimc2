@@ -19,6 +19,11 @@ from scipy.ndimage import gaussian_filter
 import os
 from sklearn.decomposition import PCA
 import plotly.graph_objects as go
+import warnings
+
+# --- SUPPRESS THIRD-PARTY WARNINGS ---
+warnings.filterwarnings("ignore", category=FutureWarning, module="yfinance")
+warnings.filterwarnings("ignore", message=".*Timestamp.utcnow is deprecated.*")
 
 st.set_page_config(
     page_title="AQI Mission Control",
@@ -385,13 +390,14 @@ def get_trade_excursions(_api, orders):
     
     if not recent_trades: return pd.DataFrame()
     
-    # --- ARCHITECTURAL FIX: BATCH DOWNLOAD ---
+    # --- ARCHITECTURAL FIX: BATCH DOWNLOAD (THREADING DISABLED) ---
     start_date = min([t['Entry_Time'] for t in recent_trades]).strftime('%Y-%m-%d')
     end_date = (max([t['Exit_Time'] for t in recent_trades]) + timedelta(days=2)).strftime('%Y-%m-%d')
     tickers = list(set([t['Ticker'] for t in recent_trades]))
     
     try:
-        yf_data = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', progress=False)
+        # Threads MUST be False to prevent Docker segfaults
+        yf_data = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', progress=False, threads=False)
     except Exception as e:
         return pd.DataFrame() # Fail gracefully if Yahoo Finance blocks the connection
 
@@ -492,7 +498,8 @@ def get_correlation_matrix(tickers):
     """Generates a 30-day correlation matrix for active positions."""
     if not tickers or len(tickers) < 2: return None
     try:
-        df = yf.download(tickers, period="1mo", interval="1d", progress=False)['Close']
+        # Threads MUST be False to prevent Docker segfaults
+        df = yf.download(tickers, period="1mo", interval="1d", progress=False, threads=False)['Close']
         if isinstance(df, pd.Series): return None
         return df.corr()
     except:
@@ -803,8 +810,8 @@ def calculate_future_projections(current_equity, target_cagr, weekly_deposits=[0
 def get_historical_spy(start_date_str):
     """Fetches historical SPY returns to calculate Beta and Correlation."""
     try:
-        # Suppress output and fetch from start_date
-        spy = yf.download("SPY", start=start_date_str, progress=False)
+        # Suppress output and fetch from start_date (Threads MUST be False)
+        spy = yf.download("SPY", start=start_date_str, progress=False, threads=False)
         
         # Safely extract 'Close' depending on yfinance multi-index vs single-index versions
         if isinstance(spy.columns, pd.MultiIndex):
@@ -3021,9 +3028,8 @@ with tab6:
 # Complete Replacement for the AUTO REFRESH LOOP at the end of the file
 # === AUTO REFRESH LOOP ===
 if auto_refresh:
-    import streamlit.components.v1 as components
-    # Offload the wait time to the client's browser, freeing the server thread immediately.
-    components.html(
+    # Use native markdown to inject the refresh script, bypassing the deprecated components API
+    st.markdown(
         """
         <script>
         setTimeout(function() {
@@ -3031,5 +3037,5 @@ if auto_refresh:
         }, 60000);
         </script>
         """,
-        height=0
+        unsafe_allow_html=True
     )
