@@ -986,9 +986,10 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
     """
     # FIX: Check for "tickers" first, fallback to legacy "signals"
     json_signals = bot_state.get("tickers", bot_state.get("signals", {}))
-    tickers = []
-    features = []
-    confidences = []
+    
+    raw_tickers = []
+    raw_features = []
+    raw_confidences = []
     
     # 1. Extract the STGNN tensors or fallback telemetry from the JSON payload
     for t, data in json_signals.items():
@@ -997,11 +998,11 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
             feature_vec = []
             
             # Use raw tensor if available and valid
-            if state_tensor and len(state_tensor) >= 2:
-                feature_vec = state_tensor[:27]
+            if state_tensor and isinstance(state_tensor, list) and len(state_tensor) >= 2:
+                # Explicitly cast to float to prevent string/type mixing
+                feature_vec = [float(x) for x in state_tensor[:27]]
             else:
-                # FALLBACK: If tensors are omitted from payload to save space, 
-                # cluster using available model telemetry (Drift, Confidence, Latency, Action)
+                # FALLBACK: If tensors are omitted, cluster using available telemetry
                 drift = float(data.get("drift_status", 0.0))
                 conf = float(data.get("confidence_score", data.get("confidence", 0.0)))
                 lat = float(data.get("execution_latency_ms", 0.0))
@@ -1009,18 +1010,35 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
                 feature_vec = [drift, conf, lat, act]
                 
             if feature_vec and len(feature_vec) >= 2:
-                tickers.append(t)
-                features.append(feature_vec)
+                raw_tickers.append(t)
+                raw_features.append(feature_vec)
                 
-                # FIX: Check for "confidence_score" first, fallback to legacy "confidence"
-                conf_val = data.get("confidence_score", data.get("confidence", 0.0))
-                confidences.append(conf_val)
+                conf_val = float(data.get("confidence_score", data.get("confidence", 0.0)))
+                raw_confidences.append(conf_val)
 
-    if len(tickers) < 3:
+    if len(raw_tickers) < 3:
         return None, None, None, None, "🔴 INSUFFICIENT DATA (Requires >= 3 Assets with Features)"
 
+    # --- ARCHITECTURAL FIX: PREVENT JAGGED ARRAYS ---
+    # Find the maximum dimension size (e.g., 27) and strictly isolate the matrix.
+    # This prevents legacy models (length 4) from crashing the np.array compilation.
+    target_dim = max([len(vec) for vec in raw_features])
+    
+    tickers = []
+    features = []
+    confidences = []
+    
+    for t, vec, conf in zip(raw_tickers, raw_features, raw_confidences):
+        if len(vec) == target_dim:
+            tickers.append(t)
+            features.append(vec)
+            confidences.append(conf)
+
+    if len(tickers) < 3:
+        return None, None, None, None, f"🔴 DIMENSION MISMATCH (Need 3+ assets with exact {target_dim}D tensor)"
+
     # 2. Standardize the Feature Matrix
-    features_np = np.array(features)
+    features_np = np.array(features, dtype=float)
     features_scaled = (features_np - np.mean(features_np, axis=0)) / (np.std(features_np, axis=0) + 1e-9)
 
     # 3. Collapse Dimensions into 2 (PCA)
