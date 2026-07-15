@@ -1859,9 +1859,9 @@ if isinstance(orders, list):
 
     # --- 3. MAIN COLUMNS ---
     c1, c2 = st.columns([3, 4])
-
+    
     with c1:
-        # --- FIX: Replaced Nested Tabs with a Radio Menu ---
+        # --- UPGRADED: 4 Tabs replaced with Radio Navigation ---
         inner_nav = st.radio(
             "Navigation",
             ["🔭 Watchlist", "📝 Decisions", "🖥️ Risk & Telemetry", "🔪 Execution & Edge"],
@@ -1898,7 +1898,6 @@ if isinstance(orders, list):
             st.markdown("#### Margin Distance")
             maint_margin = float(account.get('maintenance_margin', 0)) if account else 0.0
             
-            # FIX: Standardized to safe equity_val to prevent NameError
             margin_util = (maint_margin / equity_val * 100) if equity_val > 0 else 0.0
             
             st.progress(int(max(0, min(100, margin_util))), text=f"Margin Capacity Used: {margin_util:.1f}%")
@@ -1932,7 +1931,6 @@ if isinstance(orders, list):
         elif inner_nav == "🔪 Execution & Edge":
             st.markdown("#### ⚖️ Edge Quality")
             
-            # Use session_state to prevent NameError on first load
             global_metrics = st.session_state.get('global_metrics', {})
             sqn_val = global_metrics.get('SQN', 0)
             ulcer_val = global_metrics.get('Ulcer Index', 0)
@@ -1944,7 +1942,6 @@ if isinstance(orders, list):
             df_ex = get_trade_excursions(api, orders)
             
             if not df_ex.empty:
-                # 1. CREATE the figure first (with marginal histograms)
                 fig_ex = px.scatter(
                     df_ex, x="MAE (%)", y="MFE (%)", color="Result",
                     marginal_x="histogram", marginal_y="histogram", 
@@ -1952,17 +1949,14 @@ if isinstance(orders, list):
                     color_discrete_map={"Win": "#00ff41", "Loss": "#ff4b4b"}
                 )
                 
-                # 2. Add your crosshairs for standard Stop Loss / Take Profit boundaries
                 fig_ex.add_vline(x=-2.0, line_dash="dash", line_color="red", annotation_text="Hard Stop (-2%)", annotation_position="top right")
                 fig_ex.add_hline(y=4.0, line_dash="dash", line_color="green", annotation_text="Standard TP (+4%)", annotation_position="bottom right")
                 
-                # 3. UPDATE the traces (targeting ONLY the scatter points)
                 fig_ex.update_traces(
                     selector=dict(type='scatter'), 
                     marker=dict(size=10, line=dict(width=1, color='DarkSlateGrey'))
                 )
                 
-                # 4. Apply your layout styling
                 fig_ex.update_layout(
                     height=300, margin=dict(l=0, r=0, t=10, b=0),
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
