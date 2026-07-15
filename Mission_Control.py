@@ -990,26 +990,40 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
     features = []
     confidences = []
     
-    # 1. Extract the 27-D STGNN tensors from the JSON payload
+    # 1. Extract the STGNN tensors or fallback telemetry from the JSON payload
     for t, data in json_signals.items():
         if isinstance(data, dict):
             state_tensor = data.get("entry_state")
-            if state_tensor and len(state_tensor) >= 27:
+            feature_vec = []
+            
+            # Use raw tensor if available and valid
+            if state_tensor and len(state_tensor) >= 2:
+                feature_vec = state_tensor[:27]
+            else:
+                # FALLBACK: If tensors are omitted from payload to save space, 
+                # cluster using available model telemetry (Drift, Confidence, Latency, Action)
+                drift = float(data.get("drift_status", 0.0))
+                conf = float(data.get("confidence_score", data.get("confidence", 0.0)))
+                lat = float(data.get("execution_latency_ms", 0.0))
+                act = float(data.get("action", 0.0))
+                feature_vec = [drift, conf, lat, act]
+                
+            if feature_vec and len(feature_vec) >= 2:
                 tickers.append(t)
-                features.append(state_tensor[:27])
+                features.append(feature_vec)
                 
                 # FIX: Check for "confidence_score" first, fallback to legacy "confidence"
                 conf_val = data.get("confidence_score", data.get("confidence", 0.0))
                 confidences.append(conf_val)
 
     if len(tickers) < 3:
-        return None, None, None, None, "🔴 INSUFFICIENT DATA (Requires >= 3 Assets with Tensors)"
+        return None, None, None, None, "🔴 INSUFFICIENT DATA (Requires >= 3 Assets with Features)"
 
     # 2. Standardize the Feature Matrix
     features_np = np.array(features)
     features_scaled = (features_np - np.mean(features_np, axis=0)) / (np.std(features_np, axis=0) + 1e-9)
 
-    # 3. Collapse 27 Dimensions into 2 (PCA)
+    # 3. Collapse Dimensions into 2 (PCA)
     pca = PCA(n_components=2)
     components = pca.fit_transform(features_scaled)
     pca1 = components[:, 0]
