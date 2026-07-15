@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 import pytz
 import plotly.graph_objects as go
 import yfinance as yf
-import psutil
 import requests
 import tzdata
 import numpy as np
@@ -499,8 +498,6 @@ def get_correlation_matrix(tickers):
 
 def get_system_telemetry():
     """Fetches API latency safely and mocks local hardware telemetry."""
-    # psutil C-extensions will segfault in Streamlit Cloud's restricted cgroups.
-    # We bypass hardware reads and only poll the Alpaca API latency.
     cpu_pct = 0.0
     ram_pct = 0.0
     
@@ -3030,6 +3027,6 @@ with tab6:
 # Complete Replacement for the AUTO REFRESH LOOP at the end of the file
 # === AUTO REFRESH LOOP ===
 if auto_refresh:
-    # Use native Streamlit sleep and rerun to preserve websocket stability
-    time.sleep(60)
-    st.rerun()
+    from streamlit_autorefresh import st_autorefresh
+    # This executes purely in the frontend React layer and triggers a non-blocking rerun
+    st_autorefresh(interval=60000, key="mission_control_refresh")
