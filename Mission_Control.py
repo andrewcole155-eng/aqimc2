@@ -97,22 +97,36 @@ def read_bot_logs():
         return [f"Google Sheets Error: {e}"]
 
 @st.cache_data(ttl=60)
-def get_bot_state():
-    """Reads the live bot state from the Google Sheets bridge."""
+def get_cloud_telemetry():
+    """Reads distributed states from the Google Sheets bridge."""
     try:
         credentials = st.secrets["gcp_service_account"]
         gc = gspread.service_account_from_dict(credentials)
         sh = gc.open("Angel_Bot_Logs")
         
-        worksheet = sh.worksheet("Trading_State")
-        state_str = worksheet.acell('A1').value
+        # 1. Get Trading Agent State (Positions/Locks)
+        try:
+            trading_ws = sh.worksheet("Trading_State")
+            trading_str = trading_ws.acell('A1').value
+            trading_state = json.loads(trading_str) if trading_str else {}
+        except gspread.exceptions.WorksheetNotFound:
+            trading_state = {}
+
+        # 2. Get Daily Inference Agent State (Tensors, Health, Signals)
+        # Note: The Daily Inference Agent MUST be updated to push its 
+        # trading_state.json output to this new Google Sheets tab.
+        try:
+            inference_ws = sh.worksheet("Inference_State")
+            inference_str = inference_ws.acell('A1').value
+            inference_state = json.loads(inference_str) if inference_str else {}
+        except gspread.exceptions.WorksheetNotFound:
+            inference_state = {}
+
+        return trading_state, inference_state
         
-        if state_str:
-            return json.loads(state_str)
-        return {}
     except Exception as e:
-        # Fails gracefully if the tab doesn't exist yet or API rate limits hit
-        return {}
+        st.warning(f"Telemetry Sync Warning: {e}")
+        return {}, {}
 
 @st.cache_data(ttl=30)
 def get_account_data(_api):
@@ -1406,10 +1420,12 @@ if account:
     
     # Process Logs & JSON State
     logs = read_bot_logs()
-    bot_json_state = get_bot_state() # <-- Grab the JSON
     
-    # Pass bot_state to the updated parser
-    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs, bot_json_state)
+    # --- REPLACED: Fetch distributed telemetry ---
+    trading_state, inference_state = get_cloud_telemetry() 
+    
+    # Pass the INFERENCE state to the parser to rebuild the STGNN/PCA visuals
+    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs, inference_state)
 
     # --- NEW: WEEKEND PERSISTENCE MEMORY ---
     if conviction_data and len(conviction_data) > 0:
