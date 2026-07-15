@@ -1728,50 +1728,52 @@ with tab1:
                 st.success(f"{alert['icon']} {msg}") 
             else:
                 st.info(f"{alert['icon']} {msg}")
-    st.divider()
+        st.divider()
 
-# --- PENDING / STUCK ORDER ALERTS ---
-if isinstance(orders, list):
-    pending_orders = [o for o in orders if isinstance(o, dict) and o.get('status') in ['new', 'accepted', 'partially_filled', 'pending_new']]
-    for po in pending_orders:
-        created_at = po.get('created_at')
-        if created_at:
-            try:
-                created_dt = pd.to_datetime(created_at).tz_convert('UTC')
-                now_dt = pd.Timestamp.now(tz='UTC')
-                seconds_open = max(0, (now_dt - created_dt).total_seconds())
-                
-                side_str = po.get('side', 'UNKNOWN').upper()
-                qty_str = po.get('qty', '?')
-                sym_str = po.get('symbol', '?')
-                
-                if seconds_open > 60:
-                    st.error(f"⚠️ **Execution Alert:** {side_str} order for {qty_str} {sym_str} has been pending for {int(seconds_open)}s! High slippage risk.")
-                else:
-                    st.info(f"🔄 **Transmitting:** {side_str} {qty_str} {sym_str} (Routing to market: {int(seconds_open)}s ago)")
-            except Exception:
-                pass
+    # --- PENDING / STUCK ORDER ALERTS ---
+    if isinstance(orders, list):
+        pending_orders = [o for o in orders if isinstance(o, dict) and o.get('status') in ['new', 'accepted', 'partially_filled', 'pending_new']]
+        for po in pending_orders:
+            created_at = po.get('created_at')
+            if created_at:
+                try:
+                    created_dt = pd.to_datetime(created_at).tz_convert('UTC')
+                    now_dt = pd.Timestamp.now(tz='UTC')
+                    seconds_open = max(0, (now_dt - created_dt).total_seconds())
+                    
+                    side_str = po.get('side', 'UNKNOWN').upper()
+                    qty_str = po.get('qty', '?')
+                    sym_str = po.get('symbol', '?')
+                    
+                    if seconds_open > 60:
+                        st.error(f"⚠️ **Execution Alert:** {side_str} order for {qty_str} {sym_str} has been pending for {int(seconds_open)}s! High slippage risk.")
+                    else:
+                        st.info(f"🔄 **Transmitting:** {side_str} {qty_str} {sym_str} (Routing to market: {int(seconds_open)}s ago)")
+                except Exception:
+                    pass
         
-        # Calculate Average IRs across the Swarm
-        if model_health:
-            valid_models = [m for m in model_health.values() if 'Live IR' in m and 'Base IR' in m]
-            if valid_models:
-                avg_base_ir = sum(float(m['Base IR']) for m in valid_models) / len(valid_models)
-                avg_live_ir = sum(float(m['Live IR']) for m in valid_models) / len(valid_models)
-                ir_div = avg_live_ir - avg_base_ir
-            else:
-                avg_base_ir, avg_live_ir, ir_div = 0.0, 0.0, 0.0
+    # --- SWARM INTELLIGENCE BENCHMARK ---
+    # Calculate Average IRs across the Swarm
+    if model_health:
+        valid_models = [m for m in model_health.values() if 'Live IR' in m and 'Base IR' in m]
+        if valid_models:
+            avg_base_ir = sum(float(m['Base IR']) for m in valid_models) / len(valid_models)
+            avg_live_ir = sum(float(m['Live IR']) for m in valid_models) / len(valid_models)
+            ir_div = avg_live_ir - avg_base_ir
         else:
             avg_base_ir, avg_live_ir, ir_div = 0.0, 0.0, 0.0
-            
-        # Extract Ulcer Index from cached global metrics
-        current_ulcer = st.session_state.get('global_metrics', {}).get('Ulcer Index', 0.0)
+    else:
+        avg_base_ir, avg_live_ir, ir_div = 0.0, 0.0, 0.0
         
-        gl1, gl2, gl3 = st.columns(3)
-        gl1.metric("Swarm Benchmark (Base IR)", f"{avg_base_ir:.2f}")
-        gl2.metric("Swarm Reality (Live IR)", f"{avg_live_ir:.2f}", f"{ir_div:+.2f} Divergence", delta_color="inverse" if ir_div < 0 else "normal")
-        gl3.metric("System Pain (Ulcer Index)", f"{current_ulcer:.2f}", "Threshold: > 4.0", delta_color="inverse" if current_ulcer > 4.0 else "normal")
-    # ----------------------------------------------------
+    # Extract Ulcer Index from cached global metrics
+    current_ulcer = st.session_state.get('global_metrics', {}).get('Ulcer Index', 0.0)
+    
+    gl1, gl2, gl3 = st.columns(3)
+    gl1.metric("Swarm Benchmark (Base IR)", f"{avg_base_ir:.2f}")
+    gl2.metric("Swarm Reality (Live IR)", f"{avg_live_ir:.2f}", f"{ir_div:+.2f} Divergence", delta_color="inverse" if ir_div < 0 else "normal")
+    gl3.metric("System Pain (Ulcer Index)", f"{current_ulcer:.2f}", "Threshold: > 4.0", delta_color="inverse" if current_ulcer > 4.0 else "normal")
+
+    st.divider()
 
     # --- UPGRADED: CAPITAL DEPLOYMENT STATES ---
     st.markdown("#### 🔋 Capital Deployment Status")
