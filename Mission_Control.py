@@ -113,11 +113,15 @@ def get_cloud_telemetry():
             trading_state = {}
 
         # 2. Get Daily Inference Agent State (Tensors, Health, Signals)
-        # Note: The Daily Inference Agent MUST be updated to push its 
-        # trading_state.json output to this new Google Sheets tab.
         try:
             inference_ws = sh.worksheet("Inference_State")
-            inference_str = inference_ws.acell('A1').value
+            
+            # --- CHUNK REASSEMBLY ---
+            # Read the entire column to fetch all 45k character chunks
+            inference_chunks = inference_ws.col_values(1)
+            # Stitch them back together seamlessly
+            inference_str = "".join(inference_chunks)
+            
             inference_state = json.loads(inference_str) if inference_str else {}
         except gspread.exceptions.WorksheetNotFound:
             inference_state = {}
