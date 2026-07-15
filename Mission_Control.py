@@ -204,14 +204,19 @@ def parse_latest_run_logic(logs, bot_state=None):
     neo4j_status = "Unknown" 
     
     # 1. PARSE STRUCTURED JSON FROM DAILY INFERENCE AGENT (Primary Truth)
-    json_signals = bot_state.get("signals", {})
+    # FIX: Check for "tickers" first, fallback to legacy "signals"
+    json_signals = bot_state.get("tickers", bot_state.get("signals", {}))
     action_map = {0: "HOLD", 1: "LONG", 2: "SHORT", 3: "CLOSE"}
 
     for ticker, data in json_signals.items():
         if isinstance(data, dict):
             # Extract structured logic
             raw_action = data.get("action", 0)
-            conf_val = data.get("confidence", 0.0) * 100.0  
+            
+            # FIX: Check for "confidence_score" first, fallback to legacy "confidence"
+            raw_conf = data.get("confidence_score", data.get("confidence", 0.0))
+            conf_val = raw_conf * 100.0  
+            
             sig_text = data.get("signal", "HOLD (Unknown)")
             
             mapped_action = action_map.get(raw_action, "HOLD")
@@ -982,7 +987,8 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
     Y-axis = PCA Component 2 (Secondary Variance - usually Asset-specific divergence)
     Z-axis = True Neural Conviction.
     """
-    json_signals = bot_state.get("signals", {})
+    # FIX: Check for "tickers" first, fallback to legacy "signals"
+    json_signals = bot_state.get("tickers", bot_state.get("signals", {}))
     tickers = []
     features = []
     confidences = []
@@ -994,7 +1000,10 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
             if state_tensor and len(state_tensor) >= 27:
                 tickers.append(t)
                 features.append(state_tensor[:27])
-                confidences.append(data.get("confidence", 0.0))
+                
+                # FIX: Check for "confidence_score" first, fallback to legacy "confidence"
+                conf_val = data.get("confidence_score", data.get("confidence", 0.0))
+                confidences.append(conf_val)
 
     if len(tickers) < 3:
         return None, None, None, None, "🔴 INSUFFICIENT DATA (Requires >= 3 Assets with Tensors)"
