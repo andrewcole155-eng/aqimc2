@@ -17,6 +17,8 @@ import numpy as np
 from scipy.stats import skew, kurtosis
 from scipy.ndimage import gaussian_filter
 import os
+from sklearn.decomposition import PCA
+import plotly.graph_objects as go
 
 st.set_page_config(
     page_title="AQI Mission Control",
@@ -162,14 +164,14 @@ def get_portfolio_history(_api):
         st.error(f"Portfolio History API Error: {e}") 
         return pd.DataFrame()
 
-def parse_latest_run_logic(logs):
+def parse_latest_run_logic(logs, bot_state=None):
     """
-    Parses logs to extract:
-    1. Signals (Decisions)
-    2. Watchlist (High potential)
-    3. Neural Conviction (Latest confidence score and Action)
-    4. Model Health Metrics (Decay, Edge, and Lifecycle)
+    Parses live bot state from the JSON payload first, falling back to logs for 
+    unstructured system telemetry (Neo4j, legacy model health strings).
     """
+    if bot_state is None:
+        bot_state = {}
+
     signals = {}
     watchlist = [] 
     neural_conviction = {} 
@@ -178,42 +180,69 @@ def parse_latest_run_logic(logs):
     last_run_str = "Unknown"
     neo4j_status = "Unknown" 
     
+    # 1. PARSE STRUCTURED JSON FROM DAILY INFERENCE AGENT (Primary Truth)
+    json_signals = bot_state.get("signals", {})
+    action_map = {0: "HOLD", 1: "LONG", 2: "SHORT", 3: "CLOSE"}
+
+    for ticker, data in json_signals.items():
+        if isinstance(data, dict):
+            # Extract structured logic
+            raw_action = data.get("action", 0)
+            conf_val = data.get("confidence", 0.0) * 100.0  
+            sig_text = data.get("signal", "HOLD (Unknown)")
+            
+            mapped_action = action_map.get(raw_action, "HOLD")
+            neural_conviction[ticker] = {"Confidence": conf_val, "Action": mapped_action}
+            
+            # Format signal string for dashboard
+            if "Hold" in sig_text or "Suppressed" in sig_text:
+                signals[ticker] = "⏸️ " + sig_text
+            elif "Error" in sig_text:
+                signals[ticker] = "❌ " + sig_text
+            else:
+                signals[ticker] = "✅ " + sig_text
+                
+            # Populate Watchlist based on threshold
+            if conf_val > 40.0 and mapped_action != "HOLD":
+                tag = "🔥 Screaming Setup" if conf_val > 80.0 else "⚡ High Conviction"
+                watchlist.append({"Ticker": ticker, "Conf": f"{conf_val:.1f}%", "Status": tag})
+
+            # --- ARCHITECTURAL FIX: PARSE MODEL HEALTH DIRECTLY FROM JSON ---
+            if "base_ir" in data:
+                status_clean = "🟢 OPTIMAL" if conf_val >= 60.0 else ("🟡 STABLE" if conf_val >= 50.0 else "🔴 DEGRADED")
+                decay_val = data.get("decay", 0.0)
+                mdd_val = data.get("mdd_days", 0)
+                
+                lifecycle_stage = "Unknown"
+                if "OPTIMAL" in status_clean:
+                    lifecycle_stage = "🟢 ACTIVE (Challenger)" if decay_val > 0.9 else "🟢 ACTIVE (Production)"
+                elif "STABLE" in status_clean:
+                    lifecycle_stage = "🟡 MATURE (Monitoring)"
+                elif "DEGRADED" in status_clean:
+                    lifecycle_stage = "🔴 DEPRECATED (Pending Rollback)" if mdd_val > 42 else "🟠 DRIFTING (Requires Retraining)"
+
+                model_health[ticker] = {
+                    "Status": status_clean,
+                    "Lifecycle": lifecycle_stage,
+                    "Base IR": data.get("base_ir", 0.0),
+                    "Live IR": data.get("live_ir", 0.0),
+                    "Decay": decay_val,
+                    "MDD": mdd_val,
+                    "Base MDD": data.get("base_mdd_days", 0),
+                    "Base WR": data.get("base_wr", 0.0) * 100.0
+                }
+
+    # 2. PARSE UNSTRUCTURED LOGS (Only for Neo4j Status now)
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
-    conf_pattern = re.compile(r'Conf:?\s*([\d\.]+)%?')
-    
-    ignore_tags = {'INFO', 'WARNING', 'ERROR', 'CRITICAL', 'DEBUG'}
-    action_map = {"0": "HOLD", "1": "LONG", "2": "SHORT", "3": "CLOSE"}
     
     for line in reversed(logs):
-        
-        # --- Extract Neo4j Connection Status ---
         if "Successfully connected to Neo4j" in line:
             if neo4j_status == "Unknown": neo4j_status = "🟢 Connected"
         elif "Failed to connect to Neo4j" in line:
             if neo4j_status == "Unknown": neo4j_status = "🔴 Disconnected"
-
-        # --- EXTRACT MODEL HEALTH ---
-        if "Baseline Loaded" in line or "IR Benchmark" in line:
-            try:
-                ticker_match = re.search(r"\[([A-Z]+)\]", line)
-                ir_match = re.search(r"IR Benchmark:\s*([\d\.-]+)", line)
-                if ticker_match and ir_match:
-                    t_name = ticker_match.group(1)
-                    if t_name not in model_health:
-                        model_health[t_name] = {
-                            "Status": "STABLE",
-                            "Lifecycle": "🟢 ACTIVE (Inference)", 
-                            "Base IR": float(ir_match.group(1)),
-                            "Live IR": float(ir_match.group(1)),  
-                            "Decay": 1.0,
-                            "MDD": 0,
-                            "Base MDD": 0,
-                            "Base WR": 50.0
-                        }
-            except Exception:
-                pass
-                
-        elif "Profile:" in line and "Base IR:" in line:
+            
+        # Retain Model Health parsing (as this is still logged as text by the training/inference agent)
+        if "Profile:" in line and "Base IR:" in line:
             try:
                 parts = line.split("|")
                 ticker_match = re.search(r"(?:🧠)?\s*([A-Z]+)\s+Profile:\s+(.*?)\s*$", parts[0])
@@ -223,8 +252,6 @@ def parse_latest_run_logic(logs):
                         status_clean = ticker_match.group(2).strip()
                         raw_base_ir = float(parts[1].split(":")[1].strip()) if "Base IR" in parts[1] else 0.0
                         live_ir = float(parts[2].split(":")[1].strip()) if "Live IR" in parts[2] else 0.0
-                        
-                        base_ir = raw_base_ir
                         decay_val = float(parts[3].split(":")[1].strip()) if "Decay" in parts[3] else 1.0
                         
                         mdd_match = re.search(r"(\d+)d", parts[4]) if len(parts) > 4 else None
@@ -236,10 +263,7 @@ def parse_latest_run_logic(logs):
                         elif "STABLE" in status_clean:
                             lifecycle_stage = "🟡 MATURE (Monitoring)"
                         elif "DEGRADED" in status_clean:
-                            if mdd_val > 42:
-                                lifecycle_stage = "🔴 DEPRECATED (Pending Rollback)"
-                            else:
-                                lifecycle_stage = "🟠 DRIFTING (Requires Retraining)"
+                            lifecycle_stage = "🔴 DEPRECATED (Pending Rollback)" if mdd_val > 42 else "🟠 DRIFTING (Requires Retraining)"
                                 
                         base_mdd_match = re.search(r"(\d+)d", parts[5]) if len(parts) > 5 else None
                         base_wr_match = re.search(r"([\d\.]+)%", parts[6]) if len(parts) > 6 else None
@@ -247,7 +271,7 @@ def parse_latest_run_logic(logs):
                         model_health[t_name] = {
                             "Status": status_clean,
                             "Lifecycle": lifecycle_stage,
-                            "Base IR": base_ir,
+                            "Base IR": raw_base_ir,
                             "Live IR": live_ir,
                             "Decay": decay_val,
                             "MDD": mdd_val,
@@ -256,54 +280,6 @@ def parse_latest_run_logic(logs):
                         }
             except Exception:
                 pass
-
-        # --- UPGRADED ROBUST NEURAL CONVICTION SCRAPER ---
-        all_tags = re.findall(r'\[([A-Z]+)\]', line)
-        valid_tickers = [tag for tag in all_tags if tag not in ignore_tags]
-        
-        if valid_tickers:
-            ticker = valid_tickers[-1] 
-            
-            if ticker not in neural_conviction:
-                neural_conviction[ticker] = {"Confidence": 0.0, "Action": ""}
-                
-            conf_match = conf_pattern.search(line)
-            line_conf = float(conf_match.group(1)) if conf_match else 0.0
-            
-            if line_conf > 0 and neural_conviction[ticker]["Confidence"] == 0.0:
-                if line_conf <= 1.0:
-                    line_conf *= 100.0
-                neural_conviction[ticker]["Confidence"] = line_conf
-                
-            action_match = re.search(r'(?:PROPOSAL|SIGNAL|Forcing):\s*(\d)?', line)
-            line_action = ""
-            if "Forcing HOLD" in line:
-                line_action = "HOLD"
-            elif action_match and action_match.group(1):
-                line_action = action_map.get(action_match.group(1), "")
-                
-            if line_action != "" and neural_conviction[ticker]["Action"] == "":
-                neural_conviction[ticker]["Action"] = line_action
-
-            best_known_conf = neural_conviction[ticker]["Confidence"] if neural_conviction[ticker]["Confidence"] > 0 else line_conf
-
-            if ticker not in signals:
-                clean_msg = line.split(f"[{ticker}]")[-1].strip()
-                if "FINAL SIGNAL" in line:
-                    signals[ticker] = "✅ " + clean_msg
-                elif "Forcing HOLD" in line or "Margin" in line:
-                    signals[ticker] = "⏸️ " + clean_msg
-                    if best_known_conf > 20.0: 
-                        tag = "🔥 Screaming Setup" if best_known_conf > 80.0 else ("⚡ High Conviction" if best_known_conf > 40.0 else "👀 Watching")
-                        watchlist.append({"Ticker": ticker, "Conf": f"{best_known_conf:.1f}%", "Status": tag})
-                elif "Prediction" in line:
-                    signals[ticker] = "🤔 " + clean_msg
-                elif "Error" in line:
-                    signals[ticker] = "❌ " + clean_msg
-                else:
-                    if "RAW PROPOSAL" in line and best_known_conf > 20.0:
-                         tag = "🔥 Screaming Setup" if best_known_conf > 80.0 else ("⚡ High Conviction" if best_known_conf > 40.0 else "👀 Watching")
-                         watchlist.append({"Ticker": ticker, "Conf": f"{best_known_conf:.1f}%", "Status": tag})
 
         if last_run_str == "Unknown":
             match = ts_pattern.search(line)
@@ -321,7 +297,7 @@ def parse_latest_run_logic(logs):
     if not model_health and 'saved_model_health' in st.session_state:
         model_health = st.session_state['saved_model_health']
 
-    # FIX: Catch-all logic to guarantee every active prediction bar displays an explicit label
+    # Final cleanup for explicit labels
     for ticker, data in neural_conviction.items():
         if data["Action"] == "":
             data["Action"] = "HOLD"
@@ -403,27 +379,43 @@ def get_trade_excursions(_api, orders):
                 if inv['qty'] == 0:
                     inv['side'] = None
 
-    # Fetch highs/lows for the last 25 closed trades to avoid API limits
+    # Fetch highs/lows for the last 25 closed trades
     recent_trades = trades[-25:]
     excursion_data = []
     
+    if not recent_trades: return pd.DataFrame()
+    
+    # --- ARCHITECTURAL FIX: BATCH DOWNLOAD ---
+    start_date = min([t['Entry_Time'] for t in recent_trades]).strftime('%Y-%m-%d')
+    end_date = (max([t['Exit_Time'] for t in recent_trades]) + timedelta(days=2)).strftime('%Y-%m-%d')
+    tickers = list(set([t['Ticker'] for t in recent_trades]))
+    
+    try:
+        yf_data = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', progress=False)
+    except Exception as e:
+        return pd.DataFrame() # Fail gracefully if Yahoo Finance blocks the connection
+
     for t in recent_trades:
-        start_str = t['Entry_Time'].strftime('%Y-%m-%d')
-        end_str = (t['Exit_Time'] + timedelta(days=1)).strftime('%Y-%m-%d')
-        
+        sym = t['Ticker']
         try:
-            # Suppress output so it doesn't print to terminal
-            df = yf.download(t['Ticker'], start=start_str, end=end_str, progress=False)
-            if not df.empty:
-                # Use .values to safely extract scalar max/min regardless of yfinance multi-index formats
-                trade_high = float(df['High'].values.max())
-                trade_low = float(df['Low'].values.min())
+            if len(tickers) == 1:
+                df_sym = yf_data
+            else:
+                df_sym = yf_data[sym]
+                
+            # Filter to the exact trade window
+            trade_mask = (df_sym.index >= t['Entry_Time'].strftime('%Y-%m-%d')) & (df_sym.index <= (t['Exit_Time'] + timedelta(days=1)).strftime('%Y-%m-%d'))
+            df_trade = df_sym.loc[trade_mask]
+            
+            if not df_trade.empty:
+                trade_high = float(df_trade['High'].max())
+                trade_low = float(df_trade['Low'].min())
                 entry = t['Entry_Price']
                 exit_p = t['Exit_Price']
                 
                 if t['Type'] == 'Long':
                     mfe = (trade_high - entry) / entry * 100
-                    mae = (entry - trade_low) / entry * 100 # Keep positive for plotting scale
+                    mae = (entry - trade_low) / entry * 100 
                     pnl = (exit_p - entry) / entry * 100
                 else:
                     mfe = (entry - trade_low) / entry * 100
@@ -431,7 +423,7 @@ def get_trade_excursions(_api, orders):
                     pnl = (entry - exit_p) / entry * 100
                     
                 t['MFE (%)'] = mfe
-                t['MAE (%)'] = -mae # Convert to negative for the X-axis mapping
+                t['MAE (%)'] = -mae 
                 t['PnL (%)'] = pnl
                 t['Result'] = 'Win' if pnl > 0 else 'Loss'
                 excursion_data.append(t)
@@ -985,6 +977,74 @@ def generate_proxied_ppo_landscape(phys_df, log_state, conviction_data, grid_siz
     return X, Y, Z, z_traj, status_label
 
 @st.cache_data(ttl=600)
+def generate_stgnn_pca_landscape(bot_state, grid_size=50):
+    """
+    Simulates the true mathematical PPO Policy Landscape using Principal Component Analysis.
+    X-axis = PCA Component 1 (Primary Feature Variance - usually Macro/Market trend)
+    Y-axis = PCA Component 2 (Secondary Variance - usually Asset-specific divergence)
+    Z-axis = True Neural Conviction.
+    """
+    json_signals = bot_state.get("signals", {})
+    tickers = []
+    features = []
+    confidences = []
+    
+    # 1. Extract the 27-D STGNN tensors from the JSON payload
+    for t, data in json_signals.items():
+        if isinstance(data, dict):
+            state_tensor = data.get("entry_state")
+            if state_tensor and len(state_tensor) >= 27:
+                tickers.append(t)
+                features.append(state_tensor[:27])
+                confidences.append(data.get("confidence", 0.0))
+
+    if len(tickers) < 3:
+        return None, None, None, None, "🔴 INSUFFICIENT DATA (Requires >= 3 Assets with Tensors)"
+
+    # 2. Standardize the Feature Matrix
+    features_np = np.array(features)
+    features_scaled = (features_np - np.mean(features_np, axis=0)) / (np.std(features_np, axis=0) + 1e-9)
+
+    # 3. Collapse 27 Dimensions into 2 (PCA)
+    pca = PCA(n_components=2)
+    components = pca.fit_transform(features_scaled)
+    pca1 = components[:, 0]
+    pca2 = components[:, 1]
+    
+    variance_explained = sum(pca.explained_variance_ratio_) * 100
+
+    # 4. Generate the Phase Space Grid
+    x_min, x_max = pca1.min() - 1.5, pca1.max() + 1.5
+    y_min, y_max = pca2.min() - 1.5, pca2.max() + 1.5
+    x_grid = np.linspace(x_min, x_max, grid_size)
+    y_grid = np.linspace(y_min, y_max, grid_size)
+    X, Y = np.meshgrid(x_grid, y_grid)
+
+    # 5. Build the Conviction Terrain (Gaussian RBF Surface)
+    Z = np.zeros_like(X)
+    sigma = 1.0  
+    
+    for i in range(len(tickers)):
+        c = confidences[i]
+        Z += c * np.exp(-((X - pca1[i])**2 + (Y - pca2[i])**2) / (2 * sigma**2))
+
+    # Normalize terrain to prevent clipping
+    if Z.max() > 0:
+        Z = Z / Z.max()
+        Z = np.clip(Z, 0.1, 0.95)
+
+    swarm_data = {
+        'tickers': tickers,
+        'x': pca1,
+        'y': pca2,
+        'z': confidences
+    }
+
+    status_label = f"🟢 PCA ALIGNED (Var Explained: {variance_explained:.1f}%)"
+
+    return X, Y, Z, swarm_data, status_label
+
+@st.cache_data(ttl=600)
 def generate_phase_portrait(phys_df, grid_size=20):
     """
     Generates a 2D Phase Portrait (Velocity vs Acceleration) with Vector Flow Field, 
@@ -1215,38 +1275,24 @@ def generate_tactical_alerts(roll_df, global_metrics, margin_util, phys_df):
 
     return alerts
 
-def transmit_directives_to_agent(phys_df, roll_df):
-    """Translates Streamlit math into a JSON payload and pushes to Google Sheets."""
-    # 1. Default Baseline Parameters (Synced to Trading Agent capabilities)
+def transmit_manual_directives(is_halted, manual_sizing_multiplier):
+    """
+    Translates Human-in-the-Loop Streamlit overrides into a JSON payload.
+    Mission Control must NOT autonomously change these values.
+    """
     directives = {
-        "active_regime": "STABLE",
-        "sizing_multiplier": 1.0
+        "active_regime": "EMERGENCY_HALT" if is_halted else "STABLE",
+        "sizing_multiplier": float(manual_sizing_multiplier)
     }
     
-    # 2. Dynamic Adjustments based on physics and rolling edge
-    if not phys_df.empty:
-        latest_vel = phys_df['vel_smooth'].iloc[-1]
-        latest_acc = phys_df['acc_smooth'].iloc[-1]
-        
-        if latest_vel <= 0 and latest_acc < 0:
-            directives["active_regime"] = "PANIC / SHOCK"
-            
-    if not roll_df.empty:
-        latest_sharpe = roll_df['rolling_sharpe'].iloc[-1]
-        
-        if latest_sharpe < 0.5:
-            directives["sizing_multiplier"] = 0.5
-            
-    # 3. Prepare Payload
     payload = {"global_directives": directives}
     payload_str = json.dumps(payload, indent=4)
     
-    # 4. RATE LIMIT PROTECTION
+    # RATE LIMIT PROTECTION
     if 'last_transmitted_payload' in st.session_state:
         if st.session_state['last_transmitted_payload'] == payload_str:
             return 
             
-    # 5. Write to Google Sheets
     try:
         credentials = st.secrets["gcp_service_account"]
         gc = gspread.service_account_from_dict(credentials)
@@ -1299,8 +1345,16 @@ with st.sidebar:
     auto_refresh = st.toggle("Enable Auto-Refresh (60s)", value=True)
     
     st.divider()
+    st.subheader("🚨 Emergency Overrides")
+    st.caption("Manual intervention only. Overrides Trading Agent autonomy.")
+    sys_halt = st.checkbox("🛑 HALT ALL NEW ENTRIES")
+    sys_sizing = st.slider("Global Sizing Multiplier", 0.0, 2.0, 1.0, 0.1)
+    
+    # Push human directives to bridge
+    transmit_manual_directives(sys_halt, sys_sizing)
+    
+    st.divider()
     st.subheader("🔮 Projection Tuning")
-    # Allows you to override the CAGR for projections
     use_manual_cagr = st.checkbox("Manual CAGR Override")
     manual_cagr = st.slider("Target CAGR %", 0, 100, 25) / 100
     
@@ -1343,10 +1397,12 @@ if account:
     col3.metric("Buying Power", f"${buying_power:,.2f}")
     col_var.metric("Open Risk (VaR)", f"${total_var:,.2f}", f"-{var_pct:.2f}% Eq", delta_color="inverse")
     
-    # Process Logs
+    # Process Logs & JSON State
     logs = read_bot_logs()
-    # Unpack the correct variables to align memory state
-    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs)
+    bot_json_state = get_bot_state() # <-- Grab the JSON
+    
+    # Pass bot_state to the updated parser
+    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs, bot_json_state)
 
     # --- NEW: WEEKEND PERSISTENCE MEMORY ---
     if conviction_data and len(conviction_data) > 0:
@@ -1621,7 +1677,6 @@ with tab1:
 
     # Evaluate alerts
     alerts = generate_tactical_alerts(roll_df, st.session_state.get('global_metrics', {}), margin_util, phys_df)
-    transmit_directives_to_agent(phys_df, roll_df)
 
     if alerts:
         st.markdown("### ⚡ Active System Overrides")
@@ -2613,7 +2668,7 @@ with tab5:
     bot_states = extract_bot_states(logs)
 
     # =====================================================================
-    # --- CHART 1: MARKET PHYSICS PHASE PORTRAIT ---
+    # --- CHART 1: MARKET PHYSICS PHASE PORTRAIT (2D) ---
     # =====================================================================
     st.markdown("### 🧭 Dynamic Phase Portrait & Vector Flow")
     st.caption("A 2D representation of the market's state machine. Removes time to show cycle structure, momentum flow, and regime probability.")
@@ -2621,7 +2676,6 @@ with tab5:
     if not phys_df.empty:
         col_text1, col_plot1 = st.columns([1, 3])
         
-        # Extract latest physics metrics (FIXED: Now strictly using smoothed data to match chart)
         latest_vel = phys_df['vel_smooth'].iloc[-1]
         latest_acc = phys_df['acc_smooth'].iloc[-1]
         latest_jerk_abs = abs(phys_df['jerk_smooth'].iloc[-1])
@@ -2630,37 +2684,29 @@ with tab5:
         with col_text1:
             st.markdown("#### 📊 System State")
             
-            # Distance from Equilibrium Metric
             if latest_dfe > 3.0:
-                st.error(f"**Distance from Equilibrium:** Extreme ({latest_dfe:.2f})")
-                st.write("The system is highly overextended. Expected mean-reverting vectors (faint arrows) suggest a violent snapback toward the origin.")
+                st.error(f"**Distance from Eq:** Extreme ({latest_dfe:.2f})")
+                st.write("System highly overextended. Mean-reverting vectors suggest a violent snapback.")
             elif latest_dfe > 1.5:
-                st.warning(f"**Distance from Equilibrium:** Elevated ({latest_dfe:.2f})")
-                st.write("The system is riding high energy contours. Vulnerable to shocks.")
+                st.warning(f"**Distance from Eq:** Elevated ({latest_dfe:.2f})")
+                st.write("System riding high energy contours. Vulnerable to shocks.")
             else:
-                st.success(f"**Distance from Equilibrium:** Stable ({latest_dfe:.2f})")
-                st.write("The system is near equilibrium (the origin valley). Momentum is compressed.")
+                st.success(f"**Distance from Eq:** Stable ({latest_dfe:.2f})")
+                st.write("System is near equilibrium. Momentum is compressed.")
                 
             st.divider()
             
-            # Regime Logic
             st.markdown("#### 🗺️ Regime Classification")
-            
-            # Using strict > 0 and <= 0 bounds to ensure it matches the 4 quadrants perfectly
             if latest_vel > 0 and latest_acc > 0:
-                st.success("**Current Regime: TREND (Top Right)**")
-                st.write("Expanding bull market. The optimal environment for breakout and trend-following algorithms.")
+                st.success("**TREND (Top Right)**\n\nExpanding bull market.")
             elif latest_vel > 0 and latest_acc <= 0:
-                st.warning("**Current Regime: DISTRIBUTION (Bottom Right)**")
-                st.write("Slowing bull market. Momentum is bleeding. The vector field expects a drag toward Panic/Shock.")
+                st.warning("**DISTRIBUTION (Bottom Right)**\n\nSlowing bull market.")
             elif latest_vel <= 0 and latest_acc < 0:
-                st.error("**Current Regime: PANIC / SHOCK (Bottom Left)**")
-                st.write("Expanding bear market. High negative acceleration. Strict 2x ATR stops and baseline confidence floors will protect capital.")
+                st.error("**PANIC / SHOCK (Bottom Left)**\n\nExpanding bear market.")
             elif latest_vel <= 0 and latest_acc >= 0:
-                st.info("**Current Regime: ACCUMULATION (Top Left)**")
-                st.write("Slowing bear market. Negative returns, but the rate of decline is shrinking. Mean-reversion setups favored.")
+                st.info("**ACCUMULATION (Top Left)**\n\nSlowing bear market.")
             else:
-                st.write("System transitioning across zero-bound.")
+                st.write("Transitioning across zero-bound.")
                 
         with col_plot1:
             fig_phase = generate_phase_portrait(phys_df)
@@ -2673,215 +2719,206 @@ with tab5:
     st.divider()
 
     # =====================================================================
-    # --- CHART 2: AI POLICY LANDSCAPE & NEURAL CONVICTION (THE SWARM) ---
+    # --- CHART 2: PORTFOLIO PHYSICS & CONVICTION TRAJECTORY (3D) ---
     # =====================================================================
-    st.markdown("### 🌌 AI Policy Landscape & Confidence Terrain")
+    st.markdown("### 🎢 Portfolio Physics & Trajectory Surface")
     
-    # Generate the landscape variables
-    X, Y, Z, z_traj, landscape_status = generate_proxied_ppo_landscape(phys_df, bot_states, conviction_data)
+    # Generate Physics Landscape
+    X_phys, Y_phys, Z_phys, z_traj, phys_status = generate_proxied_ppo_landscape(phys_df, bot_states, conviction_data)
 
-    if not phys_df.empty and X is not None:
+    if not phys_df.empty and X_phys is not None:
         col_text2, col_plot2 = st.columns([1, 3])
         
         with col_text2:
-            st.markdown("#### 🧠 Agent Brain State")
-            st.caption("Translating the mathematical terrain into actionable logic.")
+            st.markdown("#### 🌊 Market Turbulence Topology")
+            st.caption("Maps the trajectory of the portfolio through velocity and volatility.")
             
-            # Topology Logic
-            if "HEALTHY" in landscape_status:
-                st.success(f"**Topology:** {landscape_status}")
-                st.write("The AI has a clear mental model. You will see distinct mountains (strong setups) and valleys (bad setups). It knows exactly what it's looking for.")
-            elif "CHAOS" in landscape_status:
-                st.warning(f"**Topology:** {landscape_status}")
-                st.write("The market is throwing erratic data. The AI's mental map is getting jagged and defensive, suppressing conviction peaks.")
+            if "HEALTHY" in phys_status:
+                st.success(f"**Topology:** {phys_status}")
+                st.write("Market movements are fluid and predictable. The agent navigates clean structural waves.")
+            elif "CHAOS" in phys_status:
+                st.warning(f"**Topology:** {phys_status}")
+                st.write("High jerk/volatility detected. The surface is rugged, indicating choppy execution.")
             else:
-                st.error(f"**Topology:** {landscape_status}")
-                st.write("The AI has lost its edge. The surface has flattened completely, meaning the bot cannot distinguish a good trade from a bad one. Safety constraints (0.50 Confidence Floor) will block entries.")
+                st.error(f"**Topology:** {phys_status}")
+                st.write("Mode collapse detected. The market has flatlined or data is stalled.")
                 
             st.divider()
-            
-            # The Swarm Explanation
-            st.markdown("#### 🛸 The Swarm (Live Assets)")
-            st.write("Each glowing orb over the terrain represents a specific ticker's live neural conviction. ")
-            st.write("- **Tightly Grouped:** The market is highly correlated; assets are moving together.")
-            st.write("- **Scattered Orbs:** The bot is finding highly decoupled, individual alpha across different setups.")
+            st.markdown("#### 🛰️ The Journey (Orange Line)")
+            st.write("The path represents the last 20 periods of portfolio acceleration and velocity.")
 
         with col_plot2:
-            fig_brain = go.Figure()
+            fig_phys = go.Figure()
             
-            # TRACE 1: THE POLICY LANDSCAPE
-            fig_brain.add_trace(go.Surface(
-                x=X, y=Y, z=Z,
+            fig_phys.add_trace(go.Surface(
+                x=X_phys, y=Y_phys, z=Z_phys,
                 colorscale='YlGnBu_r', opacity=0.8, showscale=False,
                 lighting=dict(ambient=0.4, diffuse=0.9, roughness=0.1, specular=0.2),
                 hoverinfo='none', cmin=0, cmax=1,
                 contours_z=dict(show=True, usecolormap=True, highlightcolor="#fff", project_z=True),
             ))
             
-            # TRACE 2: PHASE SPACE TRAJECTORY (The 'Bot' Walking the Surface)
             recent_phys = phys_df.tail(20) 
             x_traj = recent_phys['vel_smooth']
             y_traj = recent_phys['jerk_smooth']
             hover_dates = recent_phys['timestamp'].dt.strftime('%Y-%m-%d %H:%M')
 
-            fig_brain.add_trace(go.Scatter3d(
+            fig_phys.add_trace(go.Scatter3d(
                 x=x_traj, y=y_traj, z=z_traj,  
                 mode='lines+markers', name='Historical Path', customdata=hover_dates,
                 marker=dict(
-                    size=abs(recent_phys['jerk']) * 8 + 4, color=recent_phys['acceleration'],             
+                    size=abs(recent_phys['jerk']) * 8 + 4, color=recent_phys['acceleration'],              
                     colorscale='Viridis', opacity=1.0, line=dict(color='white', width=1),
                     colorbar=dict(title="Accel", len=0.5, y=0.2, x=0.9, tickfont={'color': "#cccccc"})
                 ),
                 line=dict(color='#ff9800', width=5),
-                hovertemplate='<b>Date</b>: %{customdata}<br><b>Vel Proxy</b>: %{x:.2f}%<br><b>Jerk Proxy</b>: %{y:.2f}%<br><b>Sim Conf</b>: %{z:.2f}<extra></extra>'
+                hovertemplate='<b>Date</b>: %{customdata}<br><b>Vel Proxy</b>: %{x:.2f}%<br><b>Jerk Proxy</b>: %{y:.2f}%<extra></extra>'
             ))
 
-            # TRACE 3: THE "SWARM" (Individual Ticker Conviction)
-            if conviction_data:
-                spread_factor = x_traj.std() * 0.5 if len(x_traj) > 1 else 0.1
-                
-                for i, (ticker, data) in enumerate(conviction_data.items()):
-                    # Calculate exact X/Y position
-                    x_pos = x_traj.iloc[-1] + np.cos(i) * spread_factor
-                    y_pos = y_traj.iloc[-1] + np.sin(i) * spread_factor
-                    
-                    ticker_conf = data["Confidence"] / 100.0
-                    z_pos = ticker_conf + 0.02
-                    
-                    # --- POINT 1: Anchor Line (Drop Shadow) ---
-                    # Draws a dotted line from the orb down to the Z=0 plane
-                    fig_brain.add_trace(go.Scatter3d(
-                        x=[x_pos, x_pos], 
-                        y=[y_pos, y_pos], 
-                        z=[0, z_pos], 
-                        mode='lines',
-                        line=dict(color='rgba(255, 255, 255, 0.4)', width=2, dash='dot'),
-                        showlegend=False,
-                        hoverinfo='skip'
-                    ))
-                    
-                    # --- POINT 3: Mapped Colorscale ---
-                    fig_brain.add_trace(go.Scatter3d(
-                        x=[x_pos], 
-                        y=[y_pos], 
-                        z=[z_pos], 
-                        mode='markers+text',
-                        name=ticker,
-                        text=[ticker],
-                        textposition="top center",
-                        textfont=dict(color="white", size=11, family="Arial Black"),
-                        marker=dict(
-                            size=10, 
-                            color=ticker_conf, # Mapped to Z-axis value
-                            colorscale='YlGnBu_r', # Matches the surface terrain
-                            cmin=0, cmax=1,
-                            line=dict(color='white', width=2)
-                        ),
-                        hovertemplate=f'<b>{ticker}</b><br>Conviction: {ticker_conf:.1%}<extra></extra>'
-                    ))
-
-            fig_brain.update_layout(
+            fig_phys.update_layout(
                 scene=dict(
                     aspectmode='manual', aspectratio=dict(x=1, y=1, z=0.5), 
-                    xaxis_title='Returns (Velocity)', yaxis_title='Jerk (Volatility)', zaxis_title='True Conviction',
+                    xaxis_title='Returns (Velocity)', yaxis_title='Jerk (Volatility)', zaxis_title='Base Conviction',
                     xaxis=dict(backgroundcolor="#1e1e1e", gridcolor="#333", showbackground=True, zerolinecolor='white'),
                     yaxis=dict(backgroundcolor="#1e1e1e", gridcolor="#333", showbackground=True, zerolinecolor='white'),
                     zaxis=dict(backgroundcolor="#1e1e1e", gridcolor="#333", showbackground=True, tickvals=[0, 0.5, 1.0], zerolinecolor='white'),
                 ),
                 paper_bgcolor='rgba(0,0,0,0)', font=dict(color="#cccccc"),
-                margin=dict(l=0, r=0, t=10, b=0), height=600, showlegend=False,
+                margin=dict(l=0, r=0, t=10, b=0), height=500, showlegend=False,
                 annotations=[dict(
-                    showarrow=False, text=f"TOPOLOGY: {landscape_status}",
+                    showarrow=False, text=f"PHYSICS TOPOLOGY: {phys_status}",
                     xref="paper", yref="paper", x=0.02, y=0.95,
                     xanchor="left", yanchor="top",
                     font=dict(size=14, color="#e91e63", weight="bold"), bgcolor="#1e1e1e"
                 )]
             )
-            st.plotly_chart(fig_brain, width='stretch')
+            st.plotly_chart(fig_phys, width='stretch')
 
-            # --- POINT 2: 2D TOPOGRAPHICAL CONVICTION MAP ---
+    st.divider()
+
+    # =====================================================================
+    # --- CHART 3: TRUE STGNN POLICY LANDSCAPE (PCA) ---
+    # =====================================================================
+    st.markdown("### 🌌 AI Policy Landscape & Feature Space (PCA)")
+    
+    # Generate the PCA landscape variables
+    X_pca, Y_pca, Z_pca, swarm_data, pca_status = generate_stgnn_pca_landscape(bot_json_state)
+
+    if X_pca is not None:
+        col_text3, col_plot3 = st.columns([1, 3])
+        
+        with col_text3:
+            st.markdown("#### 🧠 Agent Brain State")
+            st.caption("Translating the 27-D STGNN mathematical terrain into actionable logic.")
+            
+            if "ALIGNED" in pca_status:
+                st.success(f"**Topology:** {pca_status}")
+                st.write("Peaks represent regions of the 27-D feature space where the model has high conviction.")
+            else:
+                st.error(f"**Topology:** {pca_status}")
+                st.write("Insufficient tensor data to map the feature space.")
+                
             st.divider()
-            st.markdown("#### 🗺️ 2D Topographical View (Distortion-Free)")
-            st.caption("Top-down view of the Policy Landscape to accurately pinpoint ticker coordinates without 3D perspective distortion.")
+            
+            st.markdown("#### 🛸 Neural Clustering")
+            st.write("Each glowing orb represents an asset mapped by PCA:")
+            st.write("- **PCA 1 (X-Axis):** Dominant Macro/Market drift.")
+            st.write("- **PCA 2 (Y-Axis):** Asset-specific divergence.")
+            st.write("- **Clusters:** Tickers grouped tightly are exhibiting identical structural setups to the neural network.")
+
+        with col_plot3:
+            fig_pca = go.Figure()
+            
+            # TRACE 1: THE POLICY LANDSCAPE (Gaussian PCA Surface)
+            fig_pca.add_trace(go.Surface(
+                x=X_pca, y=Y_pca, z=Z_pca,
+                colorscale='YlGnBu_r', opacity=0.8, showscale=False,
+                lighting=dict(ambient=0.4, diffuse=0.9, roughness=0.1, specular=0.2),
+                hoverinfo='none', cmin=0, cmax=1,
+                contours_z=dict(show=True, usecolormap=True, highlightcolor="#fff", project_z=True),
+            ))
+
+            # TRACE 2: THE "SWARM" (Exact PCA Coordinates)
+            if swarm_data:
+                for i, ticker in enumerate(swarm_data['tickers']):
+                    x_pos = swarm_data['x'][i]
+                    y_pos = swarm_data['y'][i]
+                    z_pos = swarm_data['z'][i]
+                    
+                    fig_pca.add_trace(go.Scatter3d(
+                        x=[x_pos, x_pos], y=[y_pos, y_pos], z=[0, z_pos], 
+                        mode='lines', line=dict(color='rgba(255, 255, 255, 0.4)', width=2, dash='dot'),
+                        showlegend=False, hoverinfo='skip'
+                    ))
+                    
+                    fig_pca.add_trace(go.Scatter3d(
+                        x=[x_pos], y=[y_pos], z=[z_pos], 
+                        mode='markers+text', name=ticker, text=[ticker],
+                        textposition="top center",
+                        textfont=dict(color="white", size=11, family="Arial Black"),
+                        marker=dict(
+                            size=10, color=z_pos, colorscale='YlGnBu_r', 
+                            cmin=0, cmax=1, line=dict(color='white', width=2)
+                        ),
+                        hovertemplate=f'<b>{ticker}</b><br>Conviction: {z_pos:.1%}<br>PCA1: {x_pos:.2f}<br>PCA2: {y_pos:.2f}<extra></extra>'
+                    ))
+
+            fig_pca.update_layout(
+                scene=dict(
+                    aspectmode='manual', aspectratio=dict(x=1, y=1, z=0.6), 
+                    xaxis_title='PCA 1 (Macro Factor)', yaxis_title='PCA 2 (Asset Factor)', zaxis_title='True Conviction',
+                    xaxis=dict(backgroundcolor="#1e1e1e", gridcolor="#333", showbackground=True, zerolinecolor='white'),
+                    yaxis=dict(backgroundcolor="#1e1e1e", gridcolor="#333", showbackground=True, zerolinecolor='white'),
+                    zaxis=dict(backgroundcolor="#1e1e1e", gridcolor="#333", showbackground=True, tickvals=[0, 0.5, 1.0], zerolinecolor='white'),
+                ),
+                paper_bgcolor='rgba(0,0,0,0)', font=dict(color="#cccccc"),
+                margin=dict(l=0, r=0, t=10, b=0), height=500, showlegend=False,
+                annotations=[dict(
+                    showarrow=False, text=f"STGNN TOPOLOGY: {pca_status}",
+                    xref="paper", yref="paper", x=0.02, y=0.95,
+                    xanchor="left", yanchor="top",
+                    font=dict(size=14, color="#00ff41", weight="bold"), bgcolor="#1e1e1e"
+                )]
+            )
+            st.plotly_chart(fig_pca, width='stretch')
+
+            # --- POINT 3: 2D TOPOGRAPHICAL CONVICTION MAP ---
+            st.divider()
+            st.markdown("#### 🗺️ 2D PCA Topographical View (Distortion-Free Cluster Map)")
             
             fig_contour = go.Figure()
             
-            # 1. 2D Contour of the Landscape Surface
             fig_contour.add_trace(go.Contour(
-                x=X[0], y=Y[:, 0], z=Z,
-                colorscale='YlGnBu_r',
-                opacity=0.8,
+                x=X_pca[0], y=Y_pca[:, 0], z=Z_pca,
+                colorscale='YlGnBu_r', opacity=0.8,
                 contours=dict(showlines=True, coloring='heatmap'),
                 hoverinfo='skip'
             ))
             
-            # 2. 2D Swarm Overlay
-            if conviction_data:
-                c_x, c_y, c_text, c_color = [], [], [], []
-                
-                for i, (ticker, data) in enumerate(conviction_data.items()):
-                    x_pos = x_traj.iloc[-1] + np.cos(i) * spread_factor
-                    y_pos = y_traj.iloc[-1] + np.sin(i) * spread_factor
-                    ticker_conf = data["Confidence"] / 100.0
-                    
-                    c_x.append(x_pos)
-                    c_y.append(y_pos)
-                    c_text.append(f"{ticker}<br>{ticker_conf:.1%}")
-                    c_color.append(ticker_conf)
+            if swarm_data:
+                c_x = swarm_data['x']
+                c_y = swarm_data['y']
+                c_z = swarm_data['z']
+                c_text = [f"{t}<br>{z:.1%}" for t, z in zip(swarm_data['tickers'], c_z)]
                     
                 fig_contour.add_trace(go.Scatter(
-                    x=c_x, y=c_y,
-                    mode='markers+text',
-                    text=c_text,
+                    x=c_x, y=c_y, mode='markers+text', text=c_text,
                     textposition="top center",
                     textfont=dict(color="white", size=10, family="Arial Black"),
-                    marker=dict(
-                        size=12,
-                        color=c_color,
-                        colorscale='YlGnBu_r',
-                        cmin=0, cmax=1,
-                        line=dict(color='white', width=1.5)
-                    ),
-                    name="Live Conviction",
-                    hoverinfo='skip'
+                    marker=dict(size=12, color=c_z, colorscale='YlGnBu_r', cmin=0, cmax=1, line=dict(color='white', width=1.5)),
+                    name="Live Feature Space", hoverinfo='skip'
                 ))
                 
             fig_contour.update_layout(
-                xaxis_title='Returns (Velocity)',
-                yaxis_title='Jerk (Volatility)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="#cccccc"),
-                margin=dict(l=0, r=0, t=10, b=0),
-                height=450
-            )
-
-            # High Confidence Zone (Top of the YlGnBu_r scale / Bright Yellow)
-            fig_contour.add_annotation(
-                x=0.98, y=0.95, xref="paper", yref="paper", # Anchors to top-right canvas
-                text="🟢 HIGH CONVICTION<br>(Actionable Setups)",
-                showarrow=False,
-                font=dict(color="#1e1e1e", size=11, family="Arial Black"),
-                bgcolor="rgba(255, 255, 255, 0.7)",
-                bordercolor="#00ff41", borderwidth=2, borderpad=6,
-                xanchor="right", yanchor="top"
-            )
-            
-            # Low Confidence Zone (Bottom of the scale / Dark Blue)
-            fig_contour.add_annotation(
-                x=0.98, y=0.05, xref="paper", yref="paper", # Anchors to bottom-right canvas
-                text="🔴 LOW CONVICTION<br>(Hold / Chop Zone)",
-                showarrow=False,
-                font=dict(color="#cccccc", size=11, family="Arial Black"),
-                bgcolor="rgba(30, 30, 30, 0.7)",
-                bordercolor="#ff4b4b", borderwidth=2, borderpad=6,
-                xanchor="right", yanchor="bottom"
+                xaxis_title='PCA 1 (Macro Factor)', yaxis_title='PCA 2 (Asset Factor)',
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="#cccccc"), margin=dict(l=0, r=0, t=10, b=0), height=450
             )
 
             st.plotly_chart(fig_contour, width='stretch')
 
     else:
-        st.info("Gathering historical Policy Landscape data...")
+        st.info("Gathering historical Policy Landscape data. Waiting for Daily Inference Agent payload...")
 
 with tab6:
     # --- QUANTUM ALPHA MODEL LIFECYCLE MONITOR ---
