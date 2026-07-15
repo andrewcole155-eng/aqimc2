@@ -255,7 +255,8 @@ def parse_latest_run_logic(logs, bot_state=None):
                     "Base WR": data.get("base_wr", 0.0) * 100.0
                 }
 
-    # 2. PARSE UNSTRUCTURED LOGS (Only for Neo4j Status now)
+    # === REPLACED SECTION 2 IN parse_latest_run_logic ===
+    # 2. PARSE UNSTRUCTURED LOGS (Only for Neo4j Status and Timestamps now)
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
     
     for line in reversed(logs):
@@ -263,46 +264,6 @@ def parse_latest_run_logic(logs, bot_state=None):
             if neo4j_status == "Unknown": neo4j_status = "🟢 Connected"
         elif "Failed to connect to Neo4j" in line:
             if neo4j_status == "Unknown": neo4j_status = "🔴 Disconnected"
-            
-        # Retain Model Health parsing (as this is still logged as text by the training/inference agent)
-        if "Profile:" in line and "Base IR:" in line:
-            try:
-                parts = line.split("|")
-                ticker_match = re.search(r"(?:🧠)?\s*([A-Z]+)\s+Profile:\s+(.*?)\s*$", parts[0])
-                if ticker_match:
-                    t_name = ticker_match.group(1)
-                    if t_name not in model_health:
-                        status_clean = ticker_match.group(2).strip()
-                        raw_base_ir = float(parts[1].split(":")[1].strip()) if "Base IR" in parts[1] else 0.0
-                        live_ir = float(parts[2].split(":")[1].strip()) if "Live IR" in parts[2] else 0.0
-                        decay_val = float(parts[3].split(":")[1].strip()) if "Decay" in parts[3] else 1.0
-                        
-                        mdd_match = re.search(r"(\d+)d", parts[4]) if len(parts) > 4 else None
-                        mdd_val = int(mdd_match.group(1)) if mdd_match else 0
-                        
-                        lifecycle_stage = "Unknown"
-                        if "OPTIMAL" in status_clean:
-                            lifecycle_stage = "🟢 ACTIVE (Challenger)" if decay_val > 0.9 else "🟢 ACTIVE (Production)"
-                        elif "STABLE" in status_clean:
-                            lifecycle_stage = "🟡 MATURE (Monitoring)"
-                        elif "DEGRADED" in status_clean:
-                            lifecycle_stage = "🔴 DEPRECATED (Pending Rollback)" if mdd_val > 42 else "🟠 DRIFTING (Requires Retraining)"
-                                
-                        base_mdd_match = re.search(r"(\d+)d", parts[5]) if len(parts) > 5 else None
-                        base_wr_match = re.search(r"([\d\.]+)%", parts[6]) if len(parts) > 6 else None
-                        
-                        model_health[t_name] = {
-                            "Status": status_clean,
-                            "Lifecycle": lifecycle_stage,
-                            "Base IR": raw_base_ir,
-                            "Live IR": live_ir,
-                            "Decay": decay_val,
-                            "MDD": mdd_val,
-                            "Base MDD": int(base_mdd_match.group(1)) if base_mdd_match else 0,
-                            "Base WR": float(base_wr_match.group(1)) if base_wr_match else 50.0
-                        }
-            except Exception:
-                pass
 
         if last_run_str == "Unknown":
             match = ts_pattern.search(line)
@@ -317,6 +278,7 @@ def parse_latest_run_logic(logs, bot_state=None):
         last_run_str = "Sheet Stream Live"
         last_run_timestamp = datetime.now()
 
+    # If the JSON state didn't find anything, only then fallback to session memory
     if not model_health and 'saved_model_health' in st.session_state:
         model_health = st.session_state['saved_model_health']
 
