@@ -6,6 +6,7 @@ plotly
 gspread
 psutil
 tzdata
+PCA
 urllib3>=1.26.20
 requests>=2.31.0
 yfinance>=0.2.58
