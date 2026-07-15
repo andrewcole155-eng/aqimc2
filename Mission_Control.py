@@ -296,12 +296,19 @@ def parse_latest_run_logic(logs, bot_state=None):
 def get_market_benchmark():
     """Fetches SPY daily return for the Alpha calculation."""
     try:
-        spy = yf.Ticker("SPY")
-        hist = spy.history(period="2d")
-        if len(hist) >= 2:
-            return ((hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]) * 100
+        # Enforce threads=False to prevent C-extension segfaults in Docker
+        hist = yf.download("SPY", period="2d", interval="1d", progress=False, threads=False)
+        
+        # Safely handle yfinance's new MultiIndex output structure
+        if isinstance(hist.columns, pd.MultiIndex):
+            close_col = hist['Close']['SPY']
+        else:
+            close_col = hist['Close']
+            
+        if len(close_col) >= 2:
+            return ((float(close_col.iloc[-1]) - float(close_col.iloc[-2])) / float(close_col.iloc[-2])) * 100
         return 0.0
-    except:
+    except Exception as e:
         return 0.0
 
 @st.cache_data(ttl=3600)
@@ -486,15 +493,19 @@ def get_correlation_matrix(tickers):
         return None
 
 def get_system_telemetry():
-    """Fetches local CPU, RAM, and API latency."""
-    cpu_pct = psutil.cpu_percent(interval=0.1)
-    ram_pct = psutil.virtual_memory().percent
+    """Fetches API latency safely and mocks local hardware telemetry."""
+    # psutil C-extensions will segfault in Streamlit Cloud's restricted cgroups.
+    # We bypass hardware reads and only poll the Alpaca API latency.
+    cpu_pct = 0.0
+    ram_pct = 0.0
+    
     try:
         start = time.time()
         requests.get("https://api.alpaca.markets/v2/clock", timeout=2)
         latency = int((time.time() - start) * 1000)
     except:
         latency = 999
+        
     return cpu_pct, ram_pct, latency
 
 
@@ -3010,14 +3021,6 @@ with tab6:
 # Complete Replacement for the AUTO REFRESH LOOP at the end of the file
 # === AUTO REFRESH LOOP ===
 if auto_refresh:
-    # Use native markdown to inject the refresh script, bypassing the deprecated components API
-    st.markdown(
-        """
-        <script>
-        setTimeout(function() {
-            window.parent.location.reload();
-        }, 60000);
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+    # Use native Streamlit sleep and rerun to preserve websocket stability
+    time.sleep(60)
+    st.rerun()
