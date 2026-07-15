@@ -2828,8 +2828,8 @@ with tab5:
     # =====================================================================
     st.markdown("### 🌌 AI Policy Landscape & Feature Space (PCA)")
     
-    # Generate the PCA landscape variables
-    X_pca, Y_pca, Z_pca, swarm_data, pca_status = generate_stgnn_pca_landscape(bot_json_state)
+    # Generate the PCA landscape variables using the new cloud payload
+    X_pca, Y_pca, Z_pca, swarm_data, pca_status = generate_stgnn_pca_landscape(inference_state)
 
     if X_pca is not None:
         col_text3, col_plot3 = st.columns([1, 3])
