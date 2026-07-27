@@ -1643,10 +1643,11 @@ with tab1:
                 date_str = event.find('date').text if event.find('date') is not None else ''
                 time_str = event.find('time').text if event.find('time') is not None else ''
                 
-                if country in ['USD', 'AUD'] and time_str and time_str.lower() != 'all day':
+                # Aligned to USD and JPY to match Sunday Agent
+                if country in ['USD', 'JPY'] and time_str and time_str.lower() != 'all day':
                     title_lower = title.lower()
                     is_high_impact = impact == 'High'
-                    has_keyword = any(keyword in title_lower for keyword in ['cpi', 'fomc', 'fed', 'payroll', 'nfp', 'inflation', 'rba', 'retail sales', 'wage price', 'interest rate', 'rate decision'])
+                    has_keyword = any(keyword in title_lower for keyword in ['cpi', 'fomc', 'fed', 'payroll', 'nfp', 'inflation', 'retail sales', 'wage price', 'interest rate', 'rate decision'])
                     
                     if is_high_impact or has_keyword:
                         try:
@@ -1661,7 +1662,7 @@ with tab1:
                             hours_until = (event_dt_est - now_est).total_seconds() / 3600.0
                             
                             if hours_until > -1.0: 
-                                is_critical = any(kw in title_lower for kw in ['cpi', 'inflation', 'fomc', 'fed ', 'rba', 'interest rate', 'rate decision'])
+                                is_critical = any(kw in title_lower for kw in ['cpi', 'inflation', 'fomc', 'fed ', 'interest rate', 'rate decision'])
                                 
                                 if impact == 'High': severity_label = '🔴 High'
                                 elif impact == 'Medium': severity_label = '🟡 Medium'
@@ -1725,7 +1726,7 @@ with tab1:
             st.info("No immediate Tier-1 Macro Events pending.")
     else:
         st.success("🟢 **System Posture:** STANDARD TRAIL & TARGETS")
-        st.info("No critical Tier-1 Macro Events scheduled for USD/AUD for the remainder of the week.")
+        st.info("No critical Tier-1 Macro Events scheduled for USD/JPY for the remainder of the week.")
 
     st.divider()
 
