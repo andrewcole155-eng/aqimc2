@@ -1810,14 +1810,14 @@ with tab1:
     sc2.metric("💵 Dry Powder", f"${cash_capital:,.2f}", f"{cash_pct:.1f}% Cash", delta_color="off")
     
     # --- UPGRADED: UNIVERSE MAPPING (12 TICKERS) ---
-        ASSET_INDEX_MAP = {
-            'IONQ': 'Tech/Quantum', 'PYPL': 'Financials', 'BAC': 'Financials', 
-            'SOFI': 'Financials', 'KO': 'Consumer Defensive', 'PFE': 'Healthcare', 
-            'CCL': 'Consumer Cyclical', 'F': 'Consumer Cyclical', 'GM': 'Consumer Cyclical',
-            'OXY': 'Energy', 'FCX': 'Basic Materials', 'T': 'Communication Services'
-        }
-        monitored_tickers = list(ASSET_INDEX_MAP.keys())
-        sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers)}")
+    ASSET_INDEX_MAP = {
+        'IONQ': 'Tech/Quantum', 'PYPL': 'Financials', 'BAC': 'Financials', 
+        'SOFI': 'Financials', 'KO': 'Consumer Defensive', 'PFE': 'Healthcare', 
+        'CCL': 'Consumer Cyclical', 'F': 'Consumer Cyclical', 'GM': 'Consumer Cyclical',
+        'OXY': 'Energy', 'FCX': 'Basic Materials', 'T': 'Communication Services'
+    }
+    monitored_tickers = list(ASSET_INDEX_MAP.keys())
+    sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers)}")
 
     # --- ADDED: NEURAL SKEW / MACRO BIAS ---
     if conviction_data:
