@@ -211,15 +211,18 @@ def parse_latest_run_logic(logs, bot_state=None):
         if isinstance(data, dict):
             # Extract structured logic
             raw_action = data.get("action", 0)
-            
-            # FIX: Check for "confidence_score" first, fallback to legacy "confidence"
             raw_conf = data.get("confidence_score", data.get("confidence", 0.0))
             conf_val = raw_conf * 100.0  
-            
             sig_text = data.get("signal", "HOLD (Unknown)")
-            
             mapped_action = action_map.get(raw_action, "HOLD")
-            neural_conviction[ticker] = {"Confidence": conf_val, "Action": mapped_action}
+            
+            current_atr = data.get("atr_norm", 0.03)
+            
+            neural_conviction[ticker] = {
+                "Confidence": conf_val, 
+                "Action": mapped_action,
+                "ATR": current_atr  # <-- ADDED
+            }
             
             # Format signal string for dashboard
             if "Hold" in sig_text or "Suppressed" in sig_text:
@@ -236,7 +239,7 @@ def parse_latest_run_logic(logs, bot_state=None):
 
             # --- ARCHITECTURAL FIX: PARSE MODEL HEALTH DIRECTLY FROM JSON ---
             if "base_ir" in data:
-                status_clean = "🟢 OPTIMAL" if conf_val >= 60.0 else ("🟡 STABLE" if conf_val >= 50.0 else "🔴 DEGRADED")
+                status_clean = "🟢 OPTIMAL" if conf_val >= 60.0 else ("🟡 STABLE" if conf_val >= 40.0 else "🔴 DEGRADED")
                 decay_val = data.get("decay", 0.0)
                 mdd_val = data.get("mdd_days", 0)
                 
@@ -1420,8 +1423,24 @@ if account:
     spy_return = get_market_benchmark()
     daily_alpha = daily_pl_pct - spy_return
     
-    # Value at Risk Calculation (Your existing code)
-    total_var = sum([abs(float(p['market_value'])) * 0.03 for p in positions]) if positions else 0.0
+    # --- UPGRADED: Fetch distributed telemetry early for VaR ---
+    trading_state, inference_state = get_cloud_telemetry() 
+    json_signals = inference_state.get("tickers", inference_state.get("signals", {}))
+
+    # Value at Risk Calculation (Dynamic ATR)
+    total_var = 0.0
+    if positions:
+        for p in positions:
+            sym = p['symbol']
+            mv = abs(float(p['market_value']))
+            current_atr = 0.03
+            if sym in json_signals and isinstance(json_signals[sym], dict):
+                current_atr = json_signals[sym].get("atr_norm", 0.03)
+            
+            # Match the Trading Agent's strict 1.5x SL geometry
+            active_sl = max(current_atr * 1.5, 0.02)
+            total_var += mv * active_sl
+            
     var_pct = (total_var / equity) * 100 if equity > 0 else 0.0
     
     col1.metric("Net Liquidity", f"${equity:,.2f}", f"{daily_pl_pct:.2f}%")
@@ -1433,11 +1452,8 @@ if account:
     col3.metric("Buying Power", f"${buying_power:,.2f}")
     col_var.metric("Open Risk (VaR)", f"${total_var:,.2f}", f"-{var_pct:.2f}% Eq", delta_color="inverse")
     
-    # Process Logs & JSON State
+    # Process Logs
     logs = read_bot_logs()
-    
-    # --- UPGRADED: Fetch distributed telemetry ---
-    trading_state, inference_state = get_cloud_telemetry() 
     
     # Pass the INFERENCE state to the parser to rebuild the Neural/Lifecycle visuals
     last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs, inference_state)
@@ -1793,9 +1809,15 @@ with tab1:
     sc1.metric("💼 Active Capital", f"${active_capital:,.2f}", f"{active_pct:.1f}% Deployed", delta_color="off")
     sc2.metric("💵 Dry Powder", f"${cash_capital:,.2f}", f"{cash_pct:.1f}% Cash", delta_color="off")
     
-    # FIX: Hardcoded the ticker list so it doesn't look for the missing 'config' variable
-    monitored_tickers = ['IONQ', 'KO', 'OXY', 'BAC', 'GM', 'PFE', 'PYPL','FCX','SOFI','T','F','CCL']
-    sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers)}")
+    # --- UPGRADED: UNIVERSE MAPPING (12 TICKERS) ---
+        ASSET_INDEX_MAP = {
+            'IONQ': 'Tech/Quantum', 'PYPL': 'Financials', 'BAC': 'Financials', 
+            'SOFI': 'Financials', 'KO': 'Consumer Defensive', 'PFE': 'Healthcare', 
+            'CCL': 'Consumer Cyclical', 'F': 'Consumer Cyclical', 'GM': 'Consumer Cyclical',
+            'OXY': 'Energy', 'FCX': 'Basic Materials', 'T': 'Communication Services'
+        }
+        monitored_tickers = list(ASSET_INDEX_MAP.keys())
+        sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers)}")
 
     # --- ADDED: NEURAL SKEW / MACRO BIAS ---
     if conviction_data:
@@ -1951,8 +1973,9 @@ with tab1:
                     color_discrete_map={"Win": "#00ff41", "Loss": "#ff4b4b"}
                 )
                 
-                fig_ex.add_vline(x=-2.0, line_dash="dash", line_color="red", annotation_text="Hard Stop (-2%)", annotation_position="top right")
-                fig_ex.add_hline(y=4.0, line_dash="dash", line_color="green", annotation_text="Standard TP (+4%)", annotation_position="bottom right")
+                # --- UPDATED: Dynamic Boundary Floor Annotations ---
+                fig_ex.add_vline(x=-2.0, line_dash="dash", line_color="red", annotation_text="Absolute Risk Floor (-2%)", annotation_position="top right")
+                fig_ex.add_hline(y=4.0, line_dash="dash", line_color="green", annotation_text="Min Target Floor (+4%)", annotation_position="bottom right")
                 
                 fig_ex.update_traces(
                     selector=dict(type='scatter'), 
@@ -1995,20 +2018,12 @@ with tab1:
             st.plotly_chart(fig_alloc, width='stretch')
             
             # --- ADDED: NEXT SLOT DEPLOYMENT ESTIMATE ---
-            monitored_tickers = ['IONQ', 'KO', 'OXY', 'BAC', 'GM', 'PFE', 'PYPL', 'FCX','SOFI','T','F','CCL']
-            
-            # FIX: Standardized to safe equity_val
+            # FIX: Standardized to safe equity_val and dynamically scaled to universe size
             est_slot_size = equity_val / len(monitored_tickers) if len(monitored_tickers) > 0 else 0.0
             
             st.caption(f"🤖 **Bot Pre-Auth:** Estimated next trade size is **~${est_slot_size:,.2f}** per signal.")
             
             # --- ADDED: SECTOR / INDEX EXPOSURE ---
-            ASSET_INDEX_MAP = {
-                'IONQ': 'Tech/Quantum', 'KO': 'Consumer Defensive', 'OXY': 'Energy',
-                'BAC': 'Financials', 'GM': 'Consumer Cyclical', 'PFE': 'Healthcare',
-                'PYPL': 'Financials', 'FCX': 'Basic Materials', 'SOFI': 'Financials',
-                'T': 'Communication Services', 'F': 'Consumer Cyclical', 'CCL': 'Consumer Cyclical'
-            }
             sector_data = {}
 
             for p in positions:
@@ -2040,16 +2055,13 @@ with tab1:
                 # Calculate Invested Amount
                 invested_amt = entry * qty
                 
-                # Calculate Journey to TP (0.0 to 1.0) - Exact match to Trading Agent ATR logic
-                estimated_atr = 0.03 # Fallback aligning with trading agent
-                dynamic_sl = estimated_atr * 2.0
-                dynamic_tp = estimated_atr * 3.0
-                
-                conf_sl = 0.02
-                conf_tp = 0.04
-                
-                active_sl = min(dynamic_sl, conf_sl * 1.5) 
-                active_tp = max(dynamic_tp, conf_tp)
+                # --- REPLACED: Exact match to Trading Agent ATR logic ---
+                current_atr = 0.03
+                if conviction_data and sym in conviction_data:
+                    current_atr = conviction_data[sym].get("ATR", 0.03)
+
+                active_sl = max(current_atr * 1.5, 0.02)
+                active_tp = max(current_atr * 3.0, 0.04)
                 
                 if side == 'long':
                     sl, tp = entry * (1 - active_sl), entry * (1 + active_tp)
@@ -2057,6 +2069,7 @@ with tab1:
                 else:
                     sl, tp = entry * (1 + active_sl), entry * (1 - active_tp)
                     progress = max(0.0, min(1.0, (sl - current) / (sl - tp)))
+                # --------------------------------------------------------
 
                 # Calculate Days Held (Max 5)
                 days_held = 0
@@ -2102,11 +2115,16 @@ with tab1:
             closest_tp, closest_sl = None, None
             max_r, min_r = -999.0, 999.0
 
-            estimated_atr = 0.03 # Fallback proxy to match Trading Agent
-            dynamic_sl = estimated_atr * 2.0
-            proxy_sl_pct = min(dynamic_sl, 0.02 * 1.5) * 100 # Exact match: capped at 3.0%
-
             for p_data in pos_data:
+                # Extract specific dynamic ATR for this ticker
+                current_atr = 0.03
+                if conviction_data and p_data["Ticker"] in conviction_data:
+                    current_atr = conviction_data[p_data["Ticker"]].get("ATR", 0.03)
+                
+                # Reconstruct the exact deployed SL boundary
+                dynamic_sl = max(current_atr * 1.5, 0.02)
+                proxy_sl_pct = dynamic_sl * 100 
+                
                 # Calculate True R: (Current PnL %) / (Stop Loss %)
                 true_r = p_data["P/L (%)"] / proxy_sl_pct
                 
