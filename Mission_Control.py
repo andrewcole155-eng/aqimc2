@@ -192,16 +192,17 @@ def get_portfolio_history(_api):
             
         df = pd.DataFrame({'timestamp': history.timestamp, 'equity': history.equity})
         
-        # FIX: Force strict UTC timezone awareness immediately upon conversion
+        # FIX: Force strict numeric casting to protect against 'None' API anomalies
+        df['equity'] = pd.to_numeric(df['equity'], errors='coerce').ffill()
+        
+        # Force strict UTC timezone awareness immediately upon conversion
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
         
-        # --- MODIFICATION: Removed hardcoded start_date truncation ---
         # Sort to ensure calculations are correct
         df = df.sort_values('timestamp')
         
         return df
     except Exception as e:
-        # Expose the error to the dashboard so it never fails silently again
         st.error(f"Portfolio History API Error: {e}") 
         return pd.DataFrame()
 
@@ -214,7 +215,9 @@ def apply_twr_adjustments(hist_df):
     if hist_df.empty:
         return hist_df
         
-    hist_df['daily_return'] = hist_df['equity'].pct_change().fillna(0)
+    # Calculate returns and instantly neutralize infinite jumps from zero-balances
+    hist_df['daily_return'] = hist_df['equity'].pct_change()
+    hist_df['daily_return'] = hist_df['daily_return'].replace([np.inf, -np.inf], 0).fillna(0)
     
     roll_std = hist_df['daily_return'].rolling(window=20, min_periods=1).std()
     jump_threshold = roll_std * 5 
@@ -361,16 +364,16 @@ def get_market_benchmark():
         # Enforce threads=False to prevent C-extension segfaults in Docker
         hist = yf.download("SPY", period="2d", interval="1d", progress=False, threads=False)
         
-        # Safely handle yfinance's new MultiIndex output structure
+        # Safely extract regardless of yfinance version output
         if isinstance(hist.columns, pd.MultiIndex):
-            close_col = hist['Close']['SPY']
+            close_col = hist['Close'].iloc[:, 0]
         else:
             close_col = hist['Close']
             
         if len(close_col) >= 2:
             return ((float(close_col.iloc[-1]) - float(close_col.iloc[-2])) / float(close_col.iloc[-2])) * 100
         return 0.0
-    except Exception as e:
+    except Exception:
         return 0.0
 
 @st.cache_data(ttl=3600)
@@ -861,22 +864,19 @@ def calculate_future_projections(current_equity, target_cagr, weekly_deposits=[0
 def get_historical_spy(start_date_str):
     """Fetches historical SPY returns to calculate Beta and Correlation."""
     try:
-        # Suppress output and fetch from start_date (Threads MUST be False)
         spy = yf.download("SPY", start=start_date_str, progress=False, threads=False)
         
-        # Safely extract 'Close' depending on yfinance multi-index vs single-index versions
         if isinstance(spy.columns, pd.MultiIndex):
-            close_series = spy['Close']['SPY']
+            close_series = spy['Close'].iloc[:, 0]
         else:
             close_series = spy['Close']
             
         df = pd.DataFrame({'spy_close': close_series})
-        # Strip timezones for robust date-matching later
         df.index = pd.to_datetime(df.index).tz_localize(None).floor('D')
         df['spy_return'] = df['spy_close'].pct_change()
         
         return df[['spy_return']].dropna()
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
