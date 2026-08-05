@@ -1829,29 +1829,29 @@ with tab1:
     sc2.metric("💵 Dry Powder", f"${cash_capital:,.2f}", f"{cash_pct:.1f}% Cash", delta_color="off")
     
     # --- UPGRADED: UNIVERSE MAPPING DYNAMIC LOAD ---
-        global_cfg = load_global_config()
-        asset_index_map = global_cfg.get("asset_index_map", {})
-        monitored_tickers = list(asset_index_map.keys()) if asset_index_map else []
-        sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers) if monitored_tickers else '?'}")
+    global_cfg = load_global_config()
+    asset_index_map = global_cfg.get("asset_index_map", {})
+    monitored_tickers = list(asset_index_map.keys()) if asset_index_map else []
+    sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers) if monitored_tickers else '?'}")
 
-        # --- ADDED: NEURAL SKEW / MACRO BIAS ---
-        if conviction_data:
-            long_count = sum(1 for d in conviction_data.values() if d.get("Action") == "LONG")
-            short_count = sum(1 for d in conviction_data.values() if d.get("Action") == "SHORT")
-            hold_count = len(conviction_data) - long_count - short_count
-            
-            st.markdown("#### ⚖️ Bot Macro Bias (Neural Skew)")
-            # Normalize for progress bar (0.0 to 1.0)
-            total_signals = len(conviction_data)
-            skew_val = (long_count + (hold_count * 0.5)) / total_signals if total_signals > 0 else 0.5
-            
-            st.progress(int(max(0, min(100, skew_val * 100))))
-            b1, b2, b3 = st.columns(3)
-            b1.caption(f"🟢 Long Bias: {long_count}")
-            b2.caption(f"⚪ Neutral/Hold: {hold_count}")
-            b3.caption(f"🔴 Short Bias: {short_count}")
+    # --- ADDED: NEURAL SKEW / MACRO BIAS ---
+    if conviction_data:
+        long_count = sum(1 for d in conviction_data.values() if d.get("Action") == "LONG")
+        short_count = sum(1 for d in conviction_data.values() if d.get("Action") == "SHORT")
+        hold_count = len(conviction_data) - long_count - short_count
+        
+        st.markdown("#### ⚖️ Bot Macro Bias (Neural Skew)")
+        # Normalize for progress bar (0.0 to 1.0)
+        total_signals = len(conviction_data)
+        skew_val = (long_count + (hold_count * 0.5)) / total_signals if total_signals > 0 else 0.5
+        
+        st.progress(int(max(0, min(100, skew_val * 100))))
+        b1, b2, b3 = st.columns(3)
+        b1.caption(f"🟢 Long Bias: {long_count}")
+        b2.caption(f"⚪ Neutral/Hold: {hold_count}")
+        b3.caption(f"🔴 Short Bias: {short_count}")
 
-        st.divider()
+    st.divider()
 
     # --- 2. NEURAL CONVICTION RADAR ---
     st.subheader("🧠 Neural Conviction Levels")
