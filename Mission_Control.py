@@ -1086,7 +1086,6 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
             
             # Use raw tensor if available and valid
             if state_tensor and isinstance(state_tensor, list) and len(state_tensor) >= 2:
-                # --- MODIFICATION: Removed [:27] hardcode. 
                 # Dynamically parses the full N-dimensional tensor (e.g., all 30 features)
                 feature_vec = [float(x) for x in state_tensor]
             else:
@@ -1108,7 +1107,7 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
         return None, None, None, None, "🔴 INSUFFICIENT DATA (Requires >= 3 Assets with Features)"
 
     # --- ARCHITECTURAL FIX: PREVENT JAGGED ARRAYS ---
-    # Find the maximum dimension size (e.g., 27) and strictly isolate the matrix.
+    # Find the maximum dimension size (e.g., 30) and strictly isolate the matrix.
     # This prevents legacy models (length 4) from crashing the np.array compilation.
     target_dim = max([len(vec) for vec in raw_features])
     
@@ -2908,11 +2907,11 @@ with tab5:
         
         with col_text3:
             st.markdown("#### 🧠 Agent Brain State")
-            st.caption("Translating the 27-D STGNN mathematical terrain into actionable logic.")
+            st.caption("Translating the 30-D STGNN mathematical terrain into actionable logic.")
             
             if "ALIGNED" in pca_status:
                 st.success(f"**Topology:** {pca_status}")
-                st.write("Peaks represent regions of the 27-D feature space where the model has high conviction.")
+                st.write("Peaks represent regions of the 30-D feature space where the model has high conviction.")
             else:
                 st.error(f"**Topology:** {pca_status}")
                 st.write("Insufficient tensor data to map the feature space.")
