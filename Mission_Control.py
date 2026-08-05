@@ -145,6 +145,16 @@ def get_account_data(_api):
     except:
         return None, [], []
 
+@st.cache_data(ttl=3600)
+def load_global_config(config_path='/app/config_Alpaca_REAL_V2.json'):
+    """Dynamically loads the master configuration for Universe Mapping."""
+    try:
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"Config Load Error: {e}")
+        return {}
+
 def extract_bot_states(logs):
     """Extracts the exact number of tickers in each state from the end-of-cycle log."""
     for line in reversed(logs):
@@ -173,10 +183,7 @@ def get_portfolio_history(_api):
         # FIX: Force strict UTC timezone awareness immediately upon conversion
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
         
-        # FIX: Ensure the cutoff date is also strictly UTC aware to prevent comparison crashes
-        start_date = pd.Timestamp("2025-05-24", tz='UTC')
-        df = df[df['timestamp'] >= start_date].copy()
-        
+        # --- MODIFICATION: Removed hardcoded start_date truncation ---
         # Sort to ensure calculations are correct
         df = df.sort_values('timestamp')
         
@@ -185,6 +192,42 @@ def get_portfolio_history(_api):
         # Expose the error to the dashboard so it never fails silently again
         st.error(f"Portfolio History API Error: {e}") 
         return pd.DataFrame()
+
+def apply_twr_adjustments(hist_df):
+    """
+    Synchronised version: Identifies deposits/withdrawals securely via 
+    a strict statistical anomaly detector (5-sigma AND > 15% absolute jump) 
+    to preserve legitimate Black Swan market events.
+    """
+    if hist_df.empty:
+        return hist_df
+        
+    hist_df['daily_return'] = hist_df['equity'].pct_change().fillna(0)
+    
+    roll_std = hist_df['daily_return'].rolling(window=20, min_periods=1).std()
+    jump_threshold = roll_std * 5 
+    
+    mask = pd.Series(False, index=hist_df.index)
+    
+    for idx, row in hist_df.iterrows():
+        # To protect Black Swans, a statistical jump must be MASSIVE (>15%) to be neutralized blindly
+        is_statistical_anomaly = (abs(row['daily_return']) > jump_threshold.loc[idx]) and (abs(row['daily_return']) > 0.15)
+        if is_statistical_anomaly:
+            mask.loc[idx] = True
+    
+    # Safely neutralize non-market equity transfers
+    for idx in hist_df[mask].index:
+        prev_returns = hist_df.loc[:idx-1, 'daily_return'].dropna().tail(5)
+        clean_proxy = prev_returns.mean() if not prev_returns.empty else 0.0
+        hist_df.loc[idx, 'daily_return'] = clean_proxy 
+    
+    # Reconstruct the clean equity curve based strictly on trading performance
+    true_starting_principal = hist_df['equity'].iloc[0] if not pd.isna(hist_df['equity'].iloc[0]) else 100.0
+    hist_df['twr_equity'] = true_starting_principal * (1 + hist_df['daily_return']).cumprod()
+    hist_df['twr_equity'] = hist_df['twr_equity'].fillna(true_starting_principal)
+    
+    hist_df['equity'] = hist_df['twr_equity']
+    return hist_df
 
 def parse_latest_run_logic(logs, bot_state=None):
     """
@@ -1002,8 +1045,9 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
             
             # Use raw tensor if available and valid
             if state_tensor and isinstance(state_tensor, list) and len(state_tensor) >= 2:
-                # Explicitly cast to float to prevent string/type mixing
-                feature_vec = [float(x) for x in state_tensor[:27]]
+                # --- MODIFICATION: Removed [:27] hardcode. 
+                # Dynamically parses the full N-dimensional tensor (e.g., all 30 features)
+                feature_vec = [float(x) for x in state_tensor]
             else:
                 # FALLBACK: If tensors are omitted, cluster using available telemetry
                 drift = float(data.get("drift_status", 0.0))
@@ -1508,7 +1552,7 @@ st.divider()
 hist_df_raw = get_portfolio_history(api)
 hist_df_adj = hist_df_raw.copy()
 roll_df = pd.DataFrame()
-phys_df = pd.DataFrame() # <--- ADD THIS LINE HERE
+phys_df = pd.DataFrame() 
 
 if not hist_df_raw.empty and account:
     # Ensure UTC 
@@ -1519,47 +1563,9 @@ if not hist_df_raw.empty and account:
     now_ts = pd.Timestamp.now(tz='UTC') 
     live_row = pd.DataFrame([{'timestamp': now_ts, 'equity': current_equity_raw}])
     hist_df_raw = pd.concat([hist_df_raw, live_row], ignore_index=True)
-    hist_df_adj = hist_df_raw.copy()
-
-    # =====================================================================
-    # --- TIME-WEIGHTED RETURN (TWR) ADJUSTMENT ---
-    # Apply deposits using daily return neutralization to prevent base distortion
-    # =====================================================================
-    deposit_dates = [
-        "2026-01-24", "2026-02-12", "2026-02-16", "2026-02-26", 
-        "2026-03-04", "2026-03-13", "2026-03-21", "2026-04-09", 
-        "2026-04-15", "2026-04-23", "2026-04-29", "2026-05-06",
-        "2026-05-14", "2026-05-21", "2026-07-02", "2026-08-04"
-    ]
-        
-    # 1. Calculate raw returns first
-    hist_df_adj['daily_return'] = hist_df_adj['equity'].pct_change()
-    hist_df_adj.loc[hist_df_adj.index[0], 'daily_return'] = 0.0
-
-    # 2. Safely neutralize deposit shocks by finding the NEXT valid market day
-    for d_date in deposit_dates:
-        ts = pd.Timestamp(d_date, tz='UTC')
-        
-        # Find all recorded market days on or after the deposit date
-        future_market_days = hist_df_adj[hist_df_adj['timestamp'] >= ts]
-        
-        if not future_market_days.empty:
-            idx = future_market_days.index[0]
-            
-            # THE FIX: Calculate the 5-day mean using the days strictly BEFORE the deposit.
-            # This stops the massive deposit spike from inflating its own replacement value.
-            prev_returns = hist_df_adj.loc[:idx-1, 'daily_return'].dropna().tail(5)
-            clean_proxy_return = prev_returns.mean() if not prev_returns.empty else 0.0
-            
-            # Apply the clean proxy return to the day of the shock
-            hist_df_adj.loc[idx, 'daily_return'] = clean_proxy_return
-
-    # 3. Rebuild the normalized equity curve
-    # Anchor to your true base to ensure CAGR matches Excel
-    true_starting_principal = 3711.11
-    hist_df_adj.loc[hist_df_adj.index[0], 'equity'] = true_starting_principal
-    hist_df_adj['equity'] = true_starting_principal * (1 + hist_df_adj['daily_return']).cumprod()
-    hist_df_adj['equity'] = hist_df_adj['equity'].fillna(true_starting_principal)
+    
+    # --- MODIFICATION: Apply Dynamic TWR ---
+    hist_df_adj = apply_twr_adjustments(hist_df_raw.copy())
 
     # =====================================================================
     # --- MERGE SPY BENCHMARK FOR INFORMATION RATIO ---
@@ -1810,34 +1816,30 @@ with tab1:
     sc1.metric("💼 Active Capital", f"${active_capital:,.2f}", f"{active_pct:.1f}% Deployed", delta_color="off")
     sc2.metric("💵 Dry Powder", f"${cash_capital:,.2f}", f"{cash_pct:.1f}% Cash", delta_color="off")
     
-    # --- UPGRADED: UNIVERSE MAPPING (12 TICKERS) ---
-    ASSET_INDEX_MAP = {
-        'IONQ': 'Tech/Quantum', 'PYPL': 'Financials', 'BAC': 'Financials', 
-        'SOFI': 'Financials', 'KO': 'Consumer Defensive', 'PFE': 'Healthcare', 
-        'CCL': 'Consumer Cyclical', 'F': 'Consumer Cyclical', 'GM': 'Consumer Cyclical',
-        'OXY': 'Energy', 'FCX': 'Basic Materials', 'T': 'Communication Services'
-    }
-    monitored_tickers = list(ASSET_INDEX_MAP.keys())
-    sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers)}")
+    # --- UPGRADED: UNIVERSE MAPPING DYNAMIC LOAD ---
+        global_cfg = load_global_config()
+        asset_index_map = global_cfg.get("asset_index_map", {})
+        monitored_tickers = list(asset_index_map.keys()) if asset_index_map else []
+        sc3.metric("🤖 Active Agents", f"{len(positions)} / {len(monitored_tickers) if monitored_tickers else '?'}")
 
-    # --- ADDED: NEURAL SKEW / MACRO BIAS ---
-    if conviction_data:
-        long_count = sum(1 for d in conviction_data.values() if d.get("Action") == "LONG")
-        short_count = sum(1 for d in conviction_data.values() if d.get("Action") == "SHORT")
-        hold_count = len(conviction_data) - long_count - short_count
-        
-        st.markdown("#### ⚖️ Bot Macro Bias (Neural Skew)")
-        # Normalize for progress bar (0.0 to 1.0)
-        total_signals = len(conviction_data)
-        skew_val = (long_count + (hold_count * 0.5)) / total_signals if total_signals > 0 else 0.5
-        
-        st.progress(int(max(0, min(100, skew_val * 100))))
-        b1, b2, b3 = st.columns(3)
-        b1.caption(f"🟢 Long Bias: {long_count}")
-        b2.caption(f"⚪ Neutral/Hold: {hold_count}")
-        b3.caption(f"🔴 Short Bias: {short_count}")
+        # --- ADDED: NEURAL SKEW / MACRO BIAS ---
+        if conviction_data:
+            long_count = sum(1 for d in conviction_data.values() if d.get("Action") == "LONG")
+            short_count = sum(1 for d in conviction_data.values() if d.get("Action") == "SHORT")
+            hold_count = len(conviction_data) - long_count - short_count
+            
+            st.markdown("#### ⚖️ Bot Macro Bias (Neural Skew)")
+            # Normalize for progress bar (0.0 to 1.0)
+            total_signals = len(conviction_data)
+            skew_val = (long_count + (hold_count * 0.5)) / total_signals if total_signals > 0 else 0.5
+            
+            st.progress(int(max(0, min(100, skew_val * 100))))
+            b1, b2, b3 = st.columns(3)
+            b1.caption(f"🟢 Long Bias: {long_count}")
+            b2.caption(f"⚪ Neutral/Hold: {hold_count}")
+            b3.caption(f"🔴 Short Bias: {short_count}")
 
-    st.divider()
+        st.divider()
 
     # --- 2. NEURAL CONVICTION RADAR ---
     st.subheader("🧠 Neural Conviction Levels")
@@ -2028,7 +2030,7 @@ with tab1:
             sector_data = {}
 
             for p in positions:
-                sec = ASSET_INDEX_MAP.get(p['symbol'], 'Other')
+                sec = asset_index_map.get(p['symbol'], 'Other')
                 sector_data[sec] = sector_data.get(sec, 0) + abs(float(p['market_value']))
             
             if sector_data:
