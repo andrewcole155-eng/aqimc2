@@ -652,10 +652,14 @@ def calculate_advanced_metrics(hist_df):
     if days_active < 1: days_active = 1
     years_active = days_active / 365.25
     
-    start_equity = df['equity'].iloc[0]
-    end_equity = df['equity'].iloc[-1]
+    start_equity = float(df['equity'].iloc[0])
+    end_equity = float(df['equity'].iloc[-1])
     
-    cagr = (end_equity / start_equity) ** (1 / years_active) - 1 if years_active > 0 else 0
+    # --- FIXED: Guard against Division by Zero or NaN in CAGR ---
+    if pd.notna(start_equity) and start_equity > 0 and years_active > 0:
+        cagr = (end_equity / start_equity) ** (1 / years_active) - 1
+    else:
+        cagr = 0.0
     
     df['peak'] = df['equity'].cummax()
     max_dd = ((df['equity'] - df['peak']) / df['peak']).min()
