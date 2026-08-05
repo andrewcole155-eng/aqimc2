@@ -149,6 +149,25 @@ def get_account_data(_api):
 def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
     """Dynamically loads the master configuration for Universe Mapping."""
     import os
+    
+    # --- ADDED: Fallback Universe Map ---
+    fallback_config = {
+        "asset_index_map": {
+            "IONQ": "Tech/Quantum",
+            "PYPL": "Financials",
+            "BAC": "Financials",
+            "SOFI": "Financials",
+            "KO": "Consumer Defensive",
+            "PFE": "Healthcare",
+            "CCL": "Consumer Cyclical",
+            "F": "Consumer Cyclical",
+            "GM": "Consumer Cyclical",
+            "OXY": "Energy",
+            "FCX": "Basic Materials",
+            "T": "Communication Services"
+        }
+    }
+
     try:
         # Check local Streamlit repo folder first, fallback to Docker /app/ folder
         if os.path.exists(config_path):
@@ -156,16 +175,18 @@ def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
         elif os.path.exists('/app/config_Alpaca_REAL_V2.json'):
             target_path = '/app/config_Alpaca_REAL_V2.json'
         else:
-            return {} # Fail silently if file is not in repo, UI handles it gracefully
+            return fallback_config # Return the hardcoded map if file is missing
 
         with open(target_path, 'r') as f:
-            return json.load(f)
+            data = json.load(f)
+            # If the loaded JSON somehow lacks the map, inject the fallback map into it
+            if "asset_index_map" not in data:
+                data["asset_index_map"] = fallback_config["asset_index_map"]
+            return data
             
     except Exception as e:
-        # Removed st.error() to prevent polluting the dashboard. 
-        # The UI will safely fallback to '?' for max tickers.
-        print(f"Config Load Warning: {e}") 
-        return {}
+        print(f"Config Load Warning: {e}. Defaulting to hardcoded map.") 
+        return fallback_config
 
 def extract_bot_states(logs):
     """Extracts the exact number of tickers in each state from the end-of-cycle log."""
