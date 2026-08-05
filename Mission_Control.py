@@ -198,12 +198,16 @@ def get_portfolio_history(_api):
         # Force strict UTC timezone awareness immediately upon conversion
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
         
+        # --- CRITICAL FIX: Set true inception date to eliminate $0 account history ---
+        inception_date = pd.to_datetime('2025-05-24', utc=True)
+        df = df[df['timestamp'] >= inception_date]
+        
         # Sort to ensure calculations are correct
         df = df.sort_values('timestamp')
         
         return df
     except Exception as e:
-        st.error(f"Portfolio History API Error: {e}") 
+        print(f"Portfolio History API Error: {e}") 
         return pd.DataFrame()
 
 def apply_twr_adjustments(hist_df):
