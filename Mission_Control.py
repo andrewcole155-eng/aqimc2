@@ -31,6 +31,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# === Path Configuration (Docker vs Local Routing) ===
+if os.path.exists('/app'):
+    ROOT_DIR = '/app'
+else:
+    ROOT_DIR = '/home/andrew/.ssh/Trading/Alpaca_V2'
+
+CONFIG_DIR = os.path.join(ROOT_DIR, 'config')
+OBSERVATIONS_DIR = os.path.join(ROOT_DIR, 'observations')
+MODELS_DIR = os.path.join(ROOT_DIR, 'Models')
+
+ALPACA_CONFIG_PATH = os.path.join(CONFIG_DIR, 'config_Alpaca_REAL_V2.json')
+
 # === STYLING ===
 st.markdown("""
     <style>
@@ -169,11 +181,8 @@ def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
     }
 
     try:
-        # Check local Streamlit repo folder first, fallback to Docker /app/ folder
-        if os.path.exists(config_path):
-            target_path = config_path
-        elif os.path.exists('/app/config_Alpaca_REAL_V2.json'):
-            target_path = '/app/config_Alpaca_REAL_V2.json'
+        if os.path.exists(ALPACA_CONFIG_PATH):
+            target_path = ALPACA_CONFIG_PATH
         else:
             return fallback_config # Return the hardcoded map if file is missing
 
@@ -1449,9 +1458,9 @@ def format_log_line(line):
     clean_line = clean_line.replace("[WARNING]", '<span class="log-warn">[WARNING]</span>')
     clean_line = clean_line.replace("[ERROR]", '<span class="log-err">[ERROR]</span>')
     
-    # 4. Colorize Tickers (e.g., [AAPL])
+    # 4. Colorize Tickers (e.g., [AAPL]) - Enforce boundary to prevent matching python lists
     clean_line = re.sub(
-        r'\[([A-Z]{2,5})\]', 
+        r'(?<!\w)\[([A-Z]{2,5})\](?!\w)', 
         r'<span class="log-ticker">[\1]</span>', 
         clean_line
     )
