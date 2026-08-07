@@ -838,20 +838,15 @@ def calculate_institutional_score(metrics):
 
 def calculate_future_projections(start_date, starting_equity, target_cagr, weekly_deposits=[0, 70, 140], inflation_rate=0.03):
     """
-    Projects equity based on a provided CAGR from the portfolio inception date.
-    Generates tight monthly tracking coordinates for near-term actuals mapping,
-    and annual checkpoints for the 20-year terminal vision.
+    Projects portfolio equity in Future Nominal Dollars from inception, 
+    and tracks the inflated future cost equivalent of starting capital.
     """
     start_date = pd.to_datetime(start_date).tz_localize(None).normalize()
     today = pd.Timestamp.now().normalize()
     
     target_dates = [start_date]
-    
-    # Generate monthly checkpoints for the first 3 years for tight tracking against actuals
     for i in range(1, 37):
         target_dates.append(start_date + pd.DateOffset(months=i))
-        
-    # Yearly checkpoints for the remaining 20-year vision
     for i in range(4, 21):
         target_dates.append(start_date + pd.DateOffset(years=i))
         
@@ -868,12 +863,13 @@ def calculate_future_projections(start_date, starting_equity, target_cagr, weekl
         if years_from_start < 0: continue
         
         base_fv = starting_equity * ((1 + target_cagr) ** years_from_start)
-        base_real = base_fv / ((1 + inflation_rate) ** years_from_start)
+        # Calculate what starting capital inflates to in future dollars
+        inflated_baseline_cost = starting_equity * ((1 + inflation_rate) ** years_from_start)
         
         row = {
             "Date": date,
             "Base (No Deposits)": base_fv,
-            "Base (Real Value)": base_real
+            "Inflated Cost Equivalent": inflated_baseline_cost
         }
         
         for dep in weekly_deposits:
@@ -884,7 +880,6 @@ def calculate_future_projections(start_date, starting_equity, target_cagr, weekl
             
             row[f"+${dep}/wk"] = total_fv
             row[f"+${dep}/wk (Principal)"] = starting_equity + (dep * weeks_from_start)
-            row[f"+${dep}/wk (Real Value)"] = total_fv / ((1 + inflation_rate) ** years_from_start)
             
         projections.append(row)
         
@@ -2697,45 +2692,35 @@ with tab3:
                 st.plotly_chart(fig_proj, width='stretch')
                 
             with c_p2:
-                # Grab the 20-Year terminal values for both Base and +$140/wk
-                final_base = proj_df['Base (No Deposits)'].iloc[-1]
-                final_base_real = proj_df['Base (Real Value)'].iloc[-1]
+                # Terminal values in Future Dollars
+                final_base_nom = proj_df['Base (No Deposits)'].iloc[-1]
+                final_cost_inflated = proj_df['Inflated Cost Equivalent'].iloc[-1]
                 final_140_nom = proj_df['+$140/wk'].iloc[-1]
-                final_140_real = proj_df['+$140/wk (Real Value)'].iloc[-1]
-
-                # Base Scenario Metrics (Nominal vs Inflation-Adjusted)
+                
+                # Base Growth in Future Money
                 mb1, mb2 = st.columns(2)
-                mb1.metric("20-Yr Base (Nominal)", f"${final_base:,.0f}", f"{projection_rate:.1%} Rate")
-                mb2.metric("Base Real Power", f"${final_base_real:,.0f}", "-3.0% Yearly Drag", delta_color="inverse")
+                mb1.metric("20-Yr Base (Future $)", f"${final_base_nom:,.0f}", f"{projection_rate:.1%} Rate")
+                mb2.metric("Future Baseline Cost", f"${final_cost_inflated:,.0f}", "+3.0% Yearly Inflation", delta_color="normal")
                 
-                # +$140/wk Scenario Metrics (Nominal vs Inflation-Adjusted)
+                # Maximum Growth (+ $140/wk) in Future Money
                 m1, m2 = st.columns(2)
-                m1.metric("Max Nom (+$140/wk)", f"${final_140_nom:,.0f}")
-                m2.metric("Max Real Power", f"${final_140_real:,.0f}", "-3.0% Yearly Drag", delta_color="inverse")
-                
-                # Display Current Tracking Variance
-                today_norm = pd.Timestamp.now().normalize()
-                current_proj_baseline = proj_df[proj_df['Date'] <= today_norm].iloc[-1]['+$140/wk']
-                variance = current_equity_raw - current_proj_baseline
-                
-                st.markdown(f"**Current Variance (vs +$140/wk Target):** :{'green' if variance >= 0 else 'red'}[${variance:+,.2f}]")
-                
-                # Filter table to show current day and future milestones only
+                m1.metric("Max Account (Future $)", f"${final_140_nom:,.0f}")
+                m2.metric("Net Surplus Over Cost", f"${(final_140_nom - final_cost_inflated):,.0f}", "Future Purchasing Gain")
+
+                # Table display clean-up
                 display_df = proj_df[proj_df['Date'] >= today_norm].copy()
-                
                 st.dataframe(
                     display_df, 
                     width="stretch", 
                     hide_index=True,
                     column_config={
                         "Date": st.column_config.DatetimeColumn(format="YYYY-MM"),
-                        "Base (No Deposits)": st.column_config.NumberColumn(format="$%.0f"),
-                        "+$70/wk": st.column_config.NumberColumn(format="$%.0f"),
+                        "Base (No Deposits)": st.column_config.NumberColumn("Base Future $", format="$%.0f"),
+                        "Inflated Cost Equivalent": st.column_config.NumberColumn("Cost in Future $", format="$%.0f"),
+                        "+$70/wk": st.column_config.NumberColumn("+$70/wk Future $", format="$%.0f"),
                         "+$70/wk (Principal)": None,
-                        "+$70/wk (Real Value)": None, 
-                        "+$140/wk": st.column_config.NumberColumn(format="$%.0f"),
+                        "+$140/wk": st.column_config.NumberColumn("+$140/wk Future $", format="$%.0f"),
                         "+$140/wk (Principal)": None,
-                        "+$140/wk (Real Value)": st.column_config.NumberColumn("Real $140", format="$%.0f"),
                     },
                     height=220
                 )
