@@ -836,63 +836,53 @@ def calculate_institutional_score(metrics):
     
     return min(100, score)
 
-def calculate_future_projections(current_equity, target_cagr, weekly_deposits=[0, 70, 140], inflation_rate=0.03):
+def calculate_future_projections(start_date, starting_equity, target_cagr, weekly_deposits=[0, 70, 140], inflation_rate=0.03):
     """
-    Projects equity based on a provided CAGR, alongside scenarios for weekly injections.
-    Includes Institutional Intelligence: Principal tracking, Inflation discounting, and Scale Drag.
+    Projects equity based on a provided CAGR from the portfolio inception date.
+    Generates tight monthly tracking coordinates for near-term actuals mapping,
+    and annual checkpoints for the 20-year terminal vision.
     """
+    start_date = pd.to_datetime(start_date).tz_localize(None).normalize()
     today = pd.Timestamp.now().normalize()
-    target_dates = []
     
-    # A. Monthly: End of month for next 12 months
-    for i in range(0, 13): 
-        future_date = today + pd.tseries.offsets.MonthEnd(i)
-        if future_date < today: 
-            future_date = today + pd.tseries.offsets.MonthEnd(i+1)
-        target_dates.append(future_date)
+    target_dates = [start_date]
+    
+    # Generate monthly checkpoints for the first 3 years for tight tracking against actuals
+    for i in range(1, 37):
+        target_dates.append(start_date + pd.DateOffset(months=i))
         
-    # B. Yearly: End of [Current Month] for next 20 YEARS
-    current_month_index = today.month 
-    for i in range(2, 21): # <-- EXTENDED TO 20 YEARS
-        future_year = today.year + i
-        future_dt = pd.Timestamp(year=future_year, month=current_month_index, day=1) + pd.tseries.offsets.MonthEnd(0)
-        target_dates.append(future_dt)
-
+    # Yearly checkpoints for the remaining 20-year vision
+    for i in range(4, 21):
+        target_dates.append(start_date + pd.DateOffset(years=i))
+        
+    target_dates.append(today)
     target_dates = sorted(list(set(target_dates)))
     
-    # Calculate exact weekly rates
     weekly_rate = ((1 + target_cagr) ** (1 / 52.1429)) - 1
     
     projections = []
     for date in target_dates:
-        years_future = (date - today).days / 365.25
-        weeks_future = (date - today).days / 7
+        years_from_start = (date - start_date).days / 365.25
+        weeks_from_start = (date - start_date).days / 7
         
-        # Base Future Value
-        base_fv = current_equity * ((1 + target_cagr) ** years_future)
+        if years_from_start < 0: continue
+        
+        base_fv = starting_equity * ((1 + target_cagr) ** years_from_start)
         
         row = {
             "Date": date,
-            "Timeline": "Next 12 Months" if years_future <= 1.05 else "20-Year Vision",
             "Base (No Deposits)": base_fv
         }
         
         for dep in weekly_deposits:
             if dep == 0: continue
             
-            # FV of Annuity
-            deposit_fv = dep * (((1 + weekly_rate) ** weeks_future - 1) / weekly_rate) if weekly_rate > 0 else dep * weeks_future
+            deposit_fv = dep * (((1 + weekly_rate) ** weeks_from_start - 1) / weekly_rate) if weekly_rate > 0 else dep * weeks_from_start
             total_fv = base_fv + deposit_fv
             
-            # --- THE INTELLIGENCE ---
-            # 1. Raw Principal Deposited
-            total_principal = current_equity + (dep * weeks_future)
-            # 2. Purchasing Power (Discounted by 3% inflation)
-            real_value = total_fv / ((1 + inflation_rate) ** years_future)
-            
             row[f"+${dep}/wk"] = total_fv
-            row[f"+${dep}/wk (Principal)"] = total_principal
-            row[f"+${dep}/wk (Real Value)"] = real_value
+            row[f"+${dep}/wk (Principal)"] = starting_equity + (dep * weeks_from_start)
+            row[f"+${dep}/wk (Real Value)"] = total_fv / ((1 + inflation_rate) ** years_from_start)
             
         projections.append(row)
         
@@ -2638,48 +2628,65 @@ with tab3:
         else:
             st.caption("Waiting for SPY historical data to populate macro charts...")
 
-        # --- SECTION 5: FUTURE PROJECTIONS ---
+        # =====================================================================
+        # --- SECTION 5: FUTURE PROJECTIONS (ACTUALS VS PROJECTED) ---
+        # =====================================================================
         st.divider()
         
         projection_rate = manual_cagr if use_manual_cagr else valid_cagr
         proj_label = "Manual" if use_manual_cagr else "Adj."
         
-        # Generates projection out to 20 years
-        proj_df = calculate_future_projections(current_equity_raw, projection_rate, weekly_deposits=[0, 70, 140])
+        # Anchor the mathematics to Day 1 of the portfolio
+        inception_dt = hist_df_raw['timestamp'].min()
+        starting_principal = hist_df_raw['equity'].iloc[0]
         
-        st.markdown(f"### 🔮 20-Year Projections (Based on {proj_label} CAGR: {projection_rate:.1%})")
-        st.caption("Includes institutional reality checks: Base compounding, cumulative principal tracking, and 3% inflation discounting for actual future purchasing power.")
+        # Generates projection out to 20 years from inception
+        proj_df = calculate_future_projections(inception_dt, starting_principal, projection_rate, weekly_deposits=[0, 70, 140])
+        
+        st.markdown(f"### 🔮 Actuals vs. Projections (Based on {proj_label} CAGR: {projection_rate:.1%})")
+        st.caption("Tracking live execution against the mathematical baseline to eliminate emotional bias during drawdown cycles.")
         
         if not proj_df.empty:
             c_p1, c_p2 = st.columns([2, 1])
             with c_p1:
-                # Melt for the chart (Keeping only the Nominal totals for a clean visual)
                 melted_proj = proj_df.melt(
-                    id_vars=['Date', 'Timeline'], 
+                    id_vars=['Date'], 
                     value_vars=['Base (No Deposits)', '+$70/wk', '+$140/wk'],
                     var_name='Scenario', 
                     value_name='Projected Value'
                 )
 
-                fig_proj = px.line(
-                    melted_proj, x='Date', y='Projected Value', color='Scenario', markers=True,
-                    color_discrete_map={
-                        "Base (No Deposits)": "#569cd6", 
-                        "+$70/wk": "#c586c0",            
-                        "+$140/wk": "#00ff41"            
-                    }
-                )
+                fig_proj = go.Figure()
+
+                # Add projected lines as dashed, semi-transparent bounds
+                color_map = {
+                    "Base (No Deposits)": "rgba(86, 156, 214, 0.5)", # Muted Blue
+                    "+$70/wk": "rgba(197, 134, 192, 0.5)",           # Muted Purple            
+                    "+$140/wk": "rgba(0, 255, 65, 0.5)"              # Muted Green            
+                }
                 
-                fig_proj.update_traces(line_width=3)
+                for scenario in ['Base (No Deposits)', '+$70/wk', '+$140/wk']:
+                    scenario_data = melted_proj[melted_proj['Scenario'] == scenario]
+                    fig_proj.add_trace(go.Scatter(
+                        x=scenario_data['Date'], y=scenario_data['Projected Value'],
+                        mode='lines', name=f"Proj: {scenario}",
+                        line=dict(color=color_map[scenario], width=2, dash='dot')
+                    ))
+                
+                # Overlay the Live Actuals as a heavy, undeniable line
+                actuals_df = hist_df_raw[['timestamp', 'equity']].copy()
+                actuals_df['timestamp'] = actuals_df['timestamp'].dt.tz_localize(None)
+                
+                fig_proj.add_trace(go.Scatter(
+                    x=actuals_df['timestamp'], y=actuals_df['equity'],
+                    mode='lines', name='Live Equity (Actual)',
+                    line=dict(color='#ff9800', width=4) # Solid Orange
+                ))
+                
                 fig_proj.update_layout(
-                    margin=dict(l=0, r=0, t=30, b=0), 
-                    xaxis_title=None, 
-                    yaxis_title=None, 
-                    height=400, 
-                    template="plotly_dark",
-                    legend=dict(orientation="h", y=1.1, x=0, title=None),
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)'
+                    margin=dict(l=0, r=0, t=30, b=0), xaxis_title=None, yaxis_title=None, height=400, 
+                    template="plotly_dark", legend=dict(orientation="h", y=1.1, x=0, title=None),
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
                 )
                 st.plotly_chart(fig_proj, width='stretch')
                 
@@ -2695,24 +2702,31 @@ with tab3:
                 m1.metric("Max Nom (+$140/wk)", f"${final_140_nom:,.0f}")
                 m2.metric("Real Power (Adj. Infl)", f"${final_140_real:,.0f}", "-3.0% Yearly Drag", delta_color="inverse")
                 
-                # Format the table to show the intelligent breakdown
-                display_df = proj_df.drop(columns=['Timeline'])
+                # Display Current Tracking Variance
+                today_norm = pd.Timestamp.now().normalize()
+                current_proj_baseline = proj_df[proj_df['Date'] <= today_norm].iloc[-1]['+$140/wk']
+                variance = current_equity_raw - current_proj_baseline
+                
+                st.markdown(f"**Current Variance (vs +$140/wk Target):** :{'green' if variance >= 0 else 'red'}[${variance:+,.2f}]")
+                
+                # Filter table to show current day and future milestones only
+                display_df = proj_df[proj_df['Date'] >= today_norm].copy()
                 
                 st.dataframe(
                     display_df, 
                     width="stretch", 
                     hide_index=True,
                     column_config={
-                        "Date": st.column_config.DatetimeColumn(format="YYYY"),
+                        "Date": st.column_config.DatetimeColumn(format="YYYY-MM"),
                         "Base (No Deposits)": st.column_config.NumberColumn(format="$%.0f"),
                         "+$70/wk": st.column_config.NumberColumn(format="$%.0f"),
-                        "+$70/wk (Principal)": st.column_config.NumberColumn("Prin. 70", format="$%.0f"),
-                        "+$70/wk (Real Value)": None, # Hide intermediate real values to save horizontal space
+                        "+$70/wk (Principal)": None,
+                        "+$70/wk (Real Value)": None, 
                         "+$140/wk": st.column_config.NumberColumn(format="$%.0f"),
-                        "+$140/wk (Principal)": st.column_config.NumberColumn("Prin. 140", format="$%.0f"),
+                        "+$140/wk (Principal)": None,
                         "+$140/wk (Real Value)": st.column_config.NumberColumn("Real $140", format="$%.0f"),
                     },
-                    height=280
+                    height=220
                 )
 
         # =====================================================================
