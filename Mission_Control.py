@@ -868,10 +868,12 @@ def calculate_future_projections(start_date, starting_equity, target_cagr, weekl
         if years_from_start < 0: continue
         
         base_fv = starting_equity * ((1 + target_cagr) ** years_from_start)
+        base_real = base_fv / ((1 + inflation_rate) ** years_from_start)
         
         row = {
             "Date": date,
-            "Base (No Deposits)": base_fv
+            "Base (No Deposits)": base_fv,
+            "Base (Real Value)": base_real
         }
         
         for dep in weekly_deposits:
@@ -2695,16 +2697,21 @@ with tab3:
                 st.plotly_chart(fig_proj, width='stretch')
                 
             with c_p2:
-                # Grab the 20-Year terminal values for the top display
+                # Grab the 20-Year terminal values for both Base and +$140/wk
                 final_base = proj_df['Base (No Deposits)'].iloc[-1]
+                final_base_real = proj_df['Base (Real Value)'].iloc[-1]
                 final_140_nom = proj_df['+$140/wk'].iloc[-1]
                 final_140_real = proj_df['+$140/wk (Real Value)'].iloc[-1]
 
-                st.metric("20-Year Target (Base)", f"${final_base:,.0f}", f"{projection_rate:.1%} Rate")
+                # Base Scenario Metrics (Nominal vs Inflation-Adjusted)
+                mb1, mb2 = st.columns(2)
+                mb1.metric("20-Yr Base (Nominal)", f"${final_base:,.0f}", f"{projection_rate:.1%} Rate")
+                mb2.metric("Base Real Power", f"${final_base_real:,.0f}", "-3.0% Yearly Drag", delta_color="inverse")
                 
+                # +$140/wk Scenario Metrics (Nominal vs Inflation-Adjusted)
                 m1, m2 = st.columns(2)
                 m1.metric("Max Nom (+$140/wk)", f"${final_140_nom:,.0f}")
-                m2.metric("Real Power (Adj. Infl)", f"${final_140_real:,.0f}", "-3.0% Yearly Drag", delta_color="inverse")
+                m2.metric("Max Real Power", f"${final_140_real:,.0f}", "-3.0% Yearly Drag", delta_color="inverse")
                 
                 # Display Current Tracking Variance
                 today_norm = pd.Timestamp.now().normalize()
