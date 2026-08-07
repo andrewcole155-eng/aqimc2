@@ -838,8 +838,8 @@ def calculate_institutional_score(metrics):
 
 def calculate_future_projections(start_date, starting_equity, target_cagr, weekly_deposits=[0, 70, 140], inflation_rate=0.03):
     """
-    Projects portfolio equity in Future Nominal Dollars from inception, 
-    and tracks the inflated future cost equivalent of starting capital.
+    Projects portfolio equity from inception and compounds 3% annual inflation 
+    onto projected balances to show future inflated value targets.
     """
     start_date = pd.to_datetime(start_date).tz_localize(None).normalize()
     today = pd.Timestamp.now().normalize()
@@ -863,13 +863,13 @@ def calculate_future_projections(start_date, starting_equity, target_cagr, weekl
         if years_from_start < 0: continue
         
         base_fv = starting_equity * ((1 + target_cagr) ** years_from_start)
-        # Calculate what starting capital inflates to in future dollars
-        inflated_baseline_cost = starting_equity * ((1 + inflation_rate) ** years_from_start)
+        # Compound 3% annual inflation onto the base projected value
+        base_inflated = base_fv * ((1 + inflation_rate) ** years_from_start)
         
         row = {
             "Date": date,
             "Base (No Deposits)": base_fv,
-            "Inflated Cost Equivalent": inflated_baseline_cost
+            "Base (+3% Inflation)": base_inflated
         }
         
         for dep in weekly_deposits:
@@ -877,9 +877,10 @@ def calculate_future_projections(start_date, starting_equity, target_cagr, weekl
             
             deposit_fv = dep * (((1 + weekly_rate) ** weeks_from_start - 1) / weekly_rate) if weekly_rate > 0 else dep * weeks_from_start
             total_fv = base_fv + deposit_fv
+            total_inflated = total_fv * ((1 + inflation_rate) ** years_from_start)
             
             row[f"+${dep}/wk"] = total_fv
-            row[f"+${dep}/wk (Principal)"] = starting_equity + (dep * weeks_from_start)
+            row[f"+${dep}/wk (+3% Inflation)"] = total_inflated
             
         projections.append(row)
         
@@ -2692,23 +2693,25 @@ with tab3:
                 st.plotly_chart(fig_proj, width='stretch')
                 
             with c_p2:
-                # Terminal values in Future Dollars
-                final_base_nom = proj_df['Base (No Deposits)'].iloc[-1]
-                final_cost_inflated = proj_df['Inflated Cost Equivalent'].iloc[-1]
+                # 20-Year Terminal values
+                final_base = proj_df['Base (No Deposits)'].iloc[-1]
+                final_base_inflated = proj_df['Base (+3% Inflation)'].iloc[-1]
+                
                 final_140_nom = proj_df['+$140/wk'].iloc[-1]
+                final_140_inflated = proj_df['+$140/wk (+3% Inflation)'].iloc[-1]
                 
-                # Base Growth in Future Money
+                # Base Scenario Row
                 mb1, mb2 = st.columns(2)
-                mb1.metric("20-Yr Base (Future $)", f"${final_base_nom:,.0f}", f"{projection_rate:.1%} Rate")
-                mb2.metric("Future Baseline Cost", f"${final_cost_inflated:,.0f}", "+3.0% Yearly Inflation", delta_color="normal")
+                mb1.metric("20-Yr Base Target", f"${final_base:,.0f}", f"{projection_rate:.1%} Rate")
+                mb2.metric("20-Yr Base (+3% Infl)", f"${final_base_inflated:,.0f}", "+3.0% Yearly Inflation")
                 
-                # Maximum Growth (+ $140/wk) in Future Money
+                # +$140/wk Scenario Row
                 m1, m2 = st.columns(2)
-                m1.metric("Max Account (Future $)", f"${final_140_nom:,.0f}")
-                m2.metric("Net Surplus Over Cost", f"${(final_140_nom - final_cost_inflated):,.0f}", "Future Purchasing Gain")
+                m1.metric("Max Account (+$140/wk)", f"${final_140_nom:,.0f}")
+                m2.metric("Max Account (+3% Infl)", f"${final_140_inflated:,.0f}", "+3.0% Yearly Inflation")
 
                 # Table display clean-up
-                today_norm = pd.Timestamp.now().normalize()  # <--- FIXED: Re-declared the date filter
+                today_norm = pd.Timestamp.now().normalize()
                 display_df = proj_df[proj_df['Date'] >= today_norm].copy()
                 
                 st.dataframe(
@@ -2717,12 +2720,12 @@ with tab3:
                     hide_index=True,
                     column_config={
                         "Date": st.column_config.DatetimeColumn(format="YYYY-MM"),
-                        "Base (No Deposits)": st.column_config.NumberColumn("Base Future $", format="$%.0f"),
-                        "Inflated Cost Equivalent": st.column_config.NumberColumn("Cost in Future $", format="$%.0f"),
-                        "+$70/wk": st.column_config.NumberColumn("+$70/wk Future $", format="$%.0f"),
-                        "+$70/wk (Principal)": None,
-                        "+$140/wk": st.column_config.NumberColumn("+$140/wk Future $", format="$%.0f"),
-                        "+$140/wk (Principal)": None,
+                        "Base (No Deposits)": st.column_config.NumberColumn("Base Target", format="$%.0f"),
+                        "Base (+3% Inflation)": st.column_config.NumberColumn("Base (+3% Infl)", format="$%.0f"),
+                        "+$70/wk": st.column_config.NumberColumn("+$70/wk", format="$%.0f"),
+                        "+$70/wk (+3% Inflation)": None,
+                        "+$140/wk": st.column_config.NumberColumn("+$140/wk Target", format="$%.0f"),
+                        "+$140/wk (+3% Inflation)": st.column_config.NumberColumn("+$140/wk (+3% Infl)", format="$%.0f"),
                     },
                     height=220
                 )
