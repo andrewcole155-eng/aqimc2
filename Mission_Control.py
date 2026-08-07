@@ -2708,7 +2708,9 @@ with tab3:
                 m2.metric("Net Surplus Over Cost", f"${(final_140_nom - final_cost_inflated):,.0f}", "Future Purchasing Gain")
 
                 # Table display clean-up
+                today_norm = pd.Timestamp.now().normalize()  # <--- FIXED: Re-declared the date filter
                 display_df = proj_df[proj_df['Date'] >= today_norm].copy()
+                
                 st.dataframe(
                     display_df, 
                     width="stretch", 
