@@ -2296,8 +2296,12 @@ with tab3:
         # C. PROJECTIONS: Use valid_cagr (or manual) applied to Real Money
         projection_rate = manual_cagr if use_manual_cagr else valid_cagr
         
+        # Anchor the mathematics to Day 1 of the portfolio
+        inception_dt = hist_df_raw['timestamp'].min()
+        starting_principal = hist_df_raw['equity'].iloc[0]
+        
         # Calculate projection
-        proj_df = calculate_future_projections(current_equity_raw, projection_rate)
+        proj_df = calculate_future_projections(inception_dt, starting_principal, projection_rate)
 
         # --- SECTION 1: THE INSTITUTIONAL GAUGE ---
         col_gauge, col_scorecard = st.columns([1, 2.5])
