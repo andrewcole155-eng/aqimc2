@@ -295,14 +295,22 @@ def parse_latest_run_logic(logs, bot_state=None):
     neo4j_status = "Unknown" 
     
     # 1. PARSE STRUCTURED JSON FROM DAILY INFERENCE AGENT (Primary Truth)
-    # FIX: Check for "tickers" first, fallback to legacy "signals"
+    # STRICT FIX: Target the new payload structure exclusively
     json_signals = bot_state.get("tickers", bot_state.get("signals", {}))
     action_map = {0: "HOLD", 1: "LONG", 2: "SHORT", 3: "CLOSE"}
 
     for ticker, data in json_signals.items():
         if isinstance(data, dict):
-            # Extract structured logic
+            # Extract structured logic natively
             raw_action = data.get("action", 0)
+            
+            # Safety conversion if string is passed
+            if isinstance(raw_action, str):
+                try:
+                    raw_action = int(raw_action)
+                except ValueError:
+                    raw_action = 0
+
             raw_conf = data.get("confidence_score", data.get("confidence", 0.0))
             conf_val = raw_conf * 100.0  
             sig_text = data.get("signal", "HOLD (Unknown)")
@@ -313,7 +321,7 @@ def parse_latest_run_logic(logs, bot_state=None):
             neural_conviction[ticker] = {
                 "Confidence": conf_val, 
                 "Action": mapped_action,
-                "ATR": current_atr  # <-- ADDED
+                "ATR": current_atr  
             }
             
             # Format signal string for dashboard
@@ -335,7 +343,7 @@ def parse_latest_run_logic(logs, bot_state=None):
                 decay_val = data.get("decay", 0.0)
                 mdd_val = data.get("mdd_days", 0)
                 
-                lifecycle_stage = "Unknown"
+                lifecycle_stage = data.get("lifecycle_stage", "Unknown")
                 if "OPTIMAL" in status_clean:
                     lifecycle_stage = "🟢 ACTIVE (Challenger)" if decay_val > 0.9 else "🟢 ACTIVE (Production)"
                 elif "STABLE" in status_clean:
@@ -354,7 +362,6 @@ def parse_latest_run_logic(logs, bot_state=None):
                     "Base WR": data.get("base_wr", 0.0) * 100.0
                 }
 
-    # === REPLACED SECTION 2 IN parse_latest_run_logic ===
     # 2. PARSE UNSTRUCTURED LOGS (Only for Neo4j Status and Timestamps now)
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
     
@@ -1068,7 +1075,7 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
     Y-axis = PCA Component 2 (Secondary Variance - usually Asset-specific divergence)
     Z-axis = True Neural Conviction.
     """
-    # FIX: Check for "tickers" first, fallback to legacy "signals"
+    # STRICT FIX: Target the new payload structure exclusively
     json_signals = bot_state.get("tickers", bot_state.get("signals", {}))
     
     raw_tickers = []
@@ -1090,7 +1097,14 @@ def generate_stgnn_pca_landscape(bot_state, grid_size=50):
                 drift = float(data.get("drift_status", 0.0))
                 conf = float(data.get("confidence_score", data.get("confidence", 0.0)))
                 lat = float(data.get("execution_latency_ms", 0.0))
-                act = float(data.get("action", 0.0))
+                
+                # Safely parse the action integer
+                act_raw = data.get("action", 0)
+                try:
+                    act = float(act_raw)
+                except ValueError:
+                    act = 0.0
+                    
                 feature_vec = [drift, conf, lat, act]
                 
             if feature_vec and len(feature_vec) >= 2:
