@@ -356,29 +356,36 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                 live_wr = live_metrics.get(ticker, {}).get('Live WR', 0.0)
                 live_trades = live_metrics.get(ticker, {}).get('Trades', 0)
 
-                # Calculate Decay (1.0 = matching blueprint, <1.0 = degrading)
-                if live_trades >= 5 and base_ir > 0:
-                    decay_val = live_ir / base_ir
+                # --- NEW PRIORITY 1: QUARANTINE GUARD CLAUSE ---
+                if base_ir <= 0.0:
+                    status_clean = "🔴 QUARANTINED (Negative Base Edge)"
+                    decay_val = 0.0
+                    lifecycle_stage = "🔴 HALTED"
                 else:
-                    decay_val = 1.0 # Not enough trades to confidently penalize
+                    # Calculate Decay (1.0 = matching blueprint, <1.0 = degrading)
+                    if live_trades >= 5 and base_ir > 0:
+                        decay_val = live_ir / base_ir
+                    else:
+                        decay_val = 1.0 # Not enough trades to confidently penalize
 
-                # Dynamic Status Logic based on Reality vs Blueprint
-                if live_trades >= 5:
-                    if decay_val >= 0.7: status_clean = "🟢 OPTIMAL"
-                    elif decay_val >= 0.4: status_clean = "🟡 STABLE"
-                    else: status_clean = "🔴 DEGRADED"
-                else:
-                    status_clean = "🟢 OPTIMAL (Warming Up)"
+                    # Dynamic Status Logic based on Reality vs Blueprint
+                    if live_trades >= 5:
+                        if decay_val >= 0.7: status_clean = "🟢 OPTIMAL"
+                        elif decay_val >= 0.4: status_clean = "🟡 STABLE"
+                        else: status_clean = "🔴 DEGRADED"
+                    else:
+                        status_clean = "🟢 OPTIMAL (Warming Up)"
 
-                mdd_val = data.get("mdd_days", 0)
-                lifecycle_stage = data.get("lifecycle_stage", "Unknown")
-                
-                if "OPTIMAL" in status_clean:
-                    lifecycle_stage = "🟢 ACTIVE (Production)"
-                elif "STABLE" in status_clean:
-                    lifecycle_stage = "🟡 MATURE (Monitoring)"
-                elif "DEGRADED" in status_clean:
-                    lifecycle_stage = "🔴 DEPRECATED (Pending Rollback)" if mdd_val > 42 else "🟠 DRIFTING (Requires Retraining)"
+                    mdd_val = data.get("mdd_days", 0)
+                    lifecycle_stage = data.get("lifecycle_stage", "Unknown")
+                    
+                    if "OPTIMAL" in status_clean:
+                        lifecycle_stage = "🟢 ACTIVE (Production)"
+                    elif "STABLE" in status_clean:
+                        lifecycle_stage = "🟡 MATURE (Monitoring)"
+                    elif "DEGRADED" in status_clean:
+                        lifecycle_stage = "🔴 DEPRECATED (Pending Rollback)" if mdd_val > 42 else "🟠 DRIFTING (Requires Retraining)"
+                # --- END GUARD CLAUSE ---
 
                 model_health[ticker] = {
                     "Status": status_clean,
@@ -3127,7 +3134,9 @@ with tab6:
                 ir_text = f"a negative <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #ff4b4b;'>failing</span> to meet its weekend benchmark ({base_ir:.2f}) by a margin of {ir_diff:.2f}."
 
             # 3. Decay Intelligence
-            if decay >= 0.70:
+            if decay == 0.0 and base_ir <= 0.0:
+                decay_text = "Model is quarantined due to a negative baseline edge. Trading must be disabled."
+            elif decay >= 0.70:
                 decay_text = f"The asset decay factor is excellent at <strong>{decay:.2f}</strong>, indicating strong structural alignment with the training blueprint."
             elif decay >= 0.40:
                 decay_text = f"The asset decay factor sits at <strong style='color: #ffb000;'>{decay:.2f}</strong>, showing moderate edge erosion but remaining above the 0.40 throttle threshold."
