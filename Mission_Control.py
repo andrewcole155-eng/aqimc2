@@ -356,6 +356,10 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                 live_wr = live_metrics.get(ticker, {}).get('Live WR', 0.0)
                 live_trades = live_metrics.get(ticker, {}).get('Trades', 0)
 
+                # ---> FIX: Extract these variables early so they are always bounded!
+                mdd_val = data.get("mdd_days", 0)
+                lifecycle_stage = data.get("lifecycle_stage", "Unknown")
+
                 # --- PRIORITY 1: QUARANTINE GUARD CLAUSE ---
                 if base_ir <= 0.0:
                     status_clean = "🔴 QUARANTINED (Negative Base Edge)"
@@ -379,9 +383,6 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                             status_clean = "🔴 ABORTED (Critical Early Failure)"
                         else:
                             status_clean = "🟢 OPTIMAL (Warming Up)"
-
-                    mdd_val = data.get("mdd_days", 0)
-                    lifecycle_stage = data.get("lifecycle_stage", "Unknown")
                     
                     if "OPTIMAL" in status_clean:
                         lifecycle_stage = "🟢 ACTIVE (Production)"
