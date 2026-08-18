@@ -356,7 +356,7 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                 live_wr = live_metrics.get(ticker, {}).get('Live WR', 0.0)
                 live_trades = live_metrics.get(ticker, {}).get('Trades', 0)
 
-                # --- NEW PRIORITY 1: QUARANTINE GUARD CLAUSE ---
+                # --- PRIORITY 1: QUARANTINE GUARD CLAUSE ---
                 if base_ir <= 0.0:
                     status_clean = "🔴 QUARANTINED (Negative Base Edge)"
                     decay_val = 0.0
@@ -374,7 +374,11 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                         elif decay_val >= 0.4: status_clean = "🟡 STABLE"
                         else: status_clean = "🔴 DEGRADED"
                     else:
-                        status_clean = "🟢 OPTIMAL (Warming Up)"
+                        # --- PRIORITY 3: WARMUP KILL SWITCH ---
+                        if live_trades >= 2 and live_ir < -3.0:
+                            status_clean = "🔴 ABORTED (Critical Early Failure)"
+                        else:
+                            status_clean = "🟢 OPTIMAL (Warming Up)"
 
                     mdd_val = data.get("mdd_days", 0)
                     lifecycle_stage = data.get("lifecycle_stage", "Unknown")
@@ -385,6 +389,8 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                         lifecycle_stage = "🟡 MATURE (Monitoring)"
                     elif "DEGRADED" in status_clean:
                         lifecycle_stage = "🔴 DEPRECATED (Pending Rollback)" if mdd_val > 42 else "🟠 DRIFTING (Requires Retraining)"
+                    elif "ABORTED" in status_clean:
+                        lifecycle_stage = "🔴 HALTED"
                 # --- END GUARD CLAUSE ---
 
                 model_health[ticker] = {
@@ -3119,12 +3125,17 @@ with tab6:
             statusColor = '#444' 
             if 'OPTIMAL' in status: statusColor = '#00ff41'
             elif 'STABLE' in status: statusColor = '#ffb000'
-            elif 'DEGRADED' in status: statusColor = '#ff4b4b'
+            elif 'DEGRADED' in status or 'QUARANTINED' in status or 'ABORTED' in status: statusColor = '#ff4b4b'
 
             # 2. Information Ratio Intelligence
             ir_diff = live_ir - base_ir
             
-            if live_trades < 5:
+            # --- PRIORITY 3: ABORTED TEXT OVERRIDE ---
+            if 'ABORTED' in status:
+                ir_text = f"experiencing a <strong style='color: #ff4b4b;'>Critical Early Failure</strong>. The warmup phase was terminated early due to extreme out-of-sample losses (Live IR: {live_ir:.2f})."
+            elif 'QUARANTINED' in status:
+                ir_text = "currently completely suspended."
+            elif live_trades < 5:
                 ir_text = f"currently in a <strong>Warmup Phase ({live_trades}/5 trades)</strong>. Edge decay algorithms will engage once sufficient out-of-sample data is collected against the benchmark IR of {base_ir:.2f}."
             elif live_ir >= base_ir:
                 ir_text = f"an impressive <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #00ff41;'>outperforming</span> its weekend benchmark ({base_ir:.2f}) by +{ir_diff:.2f}."
@@ -3136,6 +3147,8 @@ with tab6:
             # 3. Decay Intelligence
             if decay == 0.0 and base_ir <= 0.0:
                 decay_text = "Model is quarantined due to a negative baseline edge. Trading must be disabled."
+            elif decay == 1.0 and 'ABORTED' in status:
+                decay_text = "Model execution halted to protect capital."
             elif decay >= 0.70:
                 decay_text = f"The asset decay factor is excellent at <strong>{decay:.2f}</strong>, indicating strong structural alignment with the training blueprint."
             elif decay >= 0.40:
