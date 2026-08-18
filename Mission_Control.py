@@ -278,13 +278,30 @@ def apply_twr_adjustments(hist_df):
     hist_df['equity'] = hist_df['twr_equity']
     return hist_df
 
-def parse_latest_run_logic(logs, bot_state=None):
+def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
     """
-    Parses live bot state from the JSON payload first, falling back to logs for 
-    unstructured system telemetry (Neo4j, legacy model health strings).
+    Parses live bot state from the JSON payload and dynamically compares 
+    the weekend training blueprints against actual Alpaca execution reality.
     """
     if bot_state is None:
         bot_state = {}
+
+    # --- PRE-CALCULATE LIVE EXECUTION REALITY ---
+    live_metrics = {}
+    if df_ex is not None and not df_ex.empty:
+        for t, group in df_ex.groupby('Ticker'):
+            trades = len(group)
+            wins = len(group[group['Result'] == 'Win'])
+            wr = (wins / trades) * 100.0 if trades > 0 else 0.0
+            
+            mean_pnl = group['PnL (%)'].mean()
+            std_pnl = group['PnL (%)'].std()
+            
+            # Proxy for Live IR (Trade-based Sharpe). 
+            # Multiply by sqrt(50) assuming ~50 trades a year as a normalization constant.
+            ir = (mean_pnl / std_pnl) * (50 ** 0.5) if std_pnl > 0 else 0.0
+            
+            live_metrics[t] = {'Live WR': wr, 'Live IR': ir, 'Trades': trades}
 
     signals = {}
     watchlist = [] 
@@ -293,59 +310,71 @@ def parse_latest_run_logic(logs, bot_state=None):
     last_run_timestamp = None
     last_run_str = "Unknown"
     neo4j_status = "Unknown" 
-    
-    # 1. PARSE STRUCTURED JSON FROM DAILY INFERENCE AGENT (Primary Truth)
-    # STRICT FIX: Target the new payload structure exclusively
+
+    # 1. PARSE STRUCTURED JSON FROM DAILY INFERENCE AGENT
     json_signals = bot_state.get("tickers", bot_state.get("signals", {}))
     action_map = {0: "HOLD", 1: "LONG", 2: "SHORT", 3: "CLOSE"}
 
     for ticker, data in json_signals.items():
         if isinstance(data, dict):
-            # Extract structured logic natively
             raw_action = data.get("action", 0)
-            
-            # Safety conversion if string is passed
             if isinstance(raw_action, str):
-                try:
-                    raw_action = int(raw_action)
-                except ValueError:
-                    raw_action = 0
+                try: raw_action = int(raw_action)
+                except ValueError: raw_action = 0
 
             raw_conf = data.get("confidence_score", data.get("confidence", 0.0))
             conf_val = raw_conf * 100.0  
             sig_text = data.get("signal", "HOLD (Unknown)")
             mapped_action = action_map.get(raw_action, "HOLD")
-            
             current_atr = data.get("atr_norm", 0.03)
-            
+
             neural_conviction[ticker] = {
                 "Confidence": conf_val, 
                 "Action": mapped_action,
                 "ATR": current_atr  
             }
-            
-            # Format signal string for dashboard
+
             if "Hold" in sig_text or "Suppressed" in sig_text:
                 signals[ticker] = "⏸️ " + sig_text
             elif "Error" in sig_text:
                 signals[ticker] = "❌ " + sig_text
             else:
                 signals[ticker] = "✅ " + sig_text
-                
-            # Populate Watchlist based on threshold
+
             if conf_val > 40.0 and mapped_action != "HOLD":
                 tag = "🔥 Screaming Setup" if conf_val > 80.0 else "⚡ High Conviction"
                 watchlist.append({"Ticker": ticker, "Conf": f"{conf_val:.1f}%", "Status": tag})
 
-            # --- ARCHITECTURAL FIX: PARSE MODEL HEALTH DIRECTLY FROM JSON ---
+            # --- ARCHITECTURAL FIX: DYNAMIC REALITY VS BLUEPRINT COMPARISON ---
             if "base_ir" in data:
-                status_clean = "🟢 OPTIMAL" if conf_val >= 60.0 else ("🟡 STABLE" if conf_val >= 40.0 else "🔴 DEGRADED")
-                decay_val = data.get("decay", 0.0)
+                base_ir = data.get("base_ir", 0.0)
+                base_wr = data.get("base_wr", 0.0) * 100.0
+                base_mdd = data.get("base_mdd_days", 0)
+
+                # Extract True Reality from Alpaca execution data
+                live_ir = live_metrics.get(ticker, {}).get('Live IR', 0.0)
+                live_wr = live_metrics.get(ticker, {}).get('Live WR', 0.0)
+                live_trades = live_metrics.get(ticker, {}).get('Trades', 0)
+
+                # Calculate Decay (1.0 = matching blueprint, <1.0 = degrading)
+                if live_trades >= 5 and base_ir > 0:
+                    decay_val = live_ir / base_ir
+                else:
+                    decay_val = 1.0 # Not enough trades to confidently penalize
+
+                # Dynamic Status Logic based on Reality vs Blueprint
+                if live_trades >= 5:
+                    if decay_val >= 0.7: status_clean = "🟢 OPTIMAL"
+                    elif decay_val >= 0.4: status_clean = "🟡 STABLE"
+                    else: status_clean = "🔴 DEGRADED"
+                else:
+                    status_clean = "🟢 OPTIMAL (Warming Up)"
+
                 mdd_val = data.get("mdd_days", 0)
-                
                 lifecycle_stage = data.get("lifecycle_stage", "Unknown")
+                
                 if "OPTIMAL" in status_clean:
-                    lifecycle_stage = "🟢 ACTIVE (Challenger)" if decay_val > 0.9 else "🟢 ACTIVE (Production)"
+                    lifecycle_stage = "🟢 ACTIVE (Production)"
                 elif "STABLE" in status_clean:
                     lifecycle_stage = "🟡 MATURE (Monitoring)"
                 elif "DEGRADED" in status_clean:
@@ -354,17 +383,18 @@ def parse_latest_run_logic(logs, bot_state=None):
                 model_health[ticker] = {
                     "Status": status_clean,
                     "Lifecycle": lifecycle_stage,
-                    "Base IR": data.get("base_ir", 0.0),
-                    "Live IR": data.get("live_ir", 0.0),
+                    "Base IR": base_ir,
+                    "Live IR": live_ir,
+                    "Base WR": base_wr,
+                    "Live WR": live_wr,
                     "Decay": decay_val,
                     "MDD": mdd_val,
-                    "Base MDD": data.get("base_mdd_days", 0),
-                    "Base WR": data.get("base_wr", 0.0) * 100.0
+                    "Base MDD": base_mdd,
+                    "Trades": live_trades
                 }
 
-    # 2. PARSE UNSTRUCTURED LOGS (Only for Neo4j Status and Timestamps now)
+    # 2. PARSE UNSTRUCTURED LOGS 
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
-    
     for line in reversed(logs):
         if "Successfully connected to Neo4j" in line:
             if neo4j_status == "Unknown": neo4j_status = "🟢 Connected"
@@ -375,27 +405,22 @@ def parse_latest_run_logic(logs, bot_state=None):
             match = ts_pattern.search(line)
             if match:
                 last_run_str = match.group(1)
-                try:
-                    last_run_timestamp = datetime.strptime(last_run_str, '%Y-%m-%d %H:%M:%S')
-                except:
-                    pass
+                try: last_run_timestamp = datetime.strptime(last_run_str, '%Y-%m-%d %H:%M:%S')
+                except: pass
 
     if last_run_str == "Unknown" and len(logs) > 0:
         last_run_str = "Sheet Stream Live"
         last_run_timestamp = datetime.now()
 
-    # If the JSON state didn't find anything, only then fallback to session memory
     if not model_health and 'saved_model_health' in st.session_state:
         model_health = st.session_state['saved_model_health']
 
-    # Final cleanup for explicit labels
     for ticker, data in neural_conviction.items():
-        if data["Action"] == "":
-            data["Action"] = "HOLD"
+        if data["Action"] == "": data["Action"] = "HOLD"
 
     final_conviction = {k: v for k, v in neural_conviction.items() if v["Confidence"] > 0}
     unique_watchlist = {v['Ticker']:v for v in watchlist}.values()
-    
+
     return last_run_str, last_run_timestamp, signals, list(unique_watchlist), final_conviction, model_health, neo4j_status
 
 @st.cache_data(ttl=300)
@@ -1500,25 +1525,25 @@ with st.sidebar:
 api = init_alpaca()
 if not api: st.stop()
 
-# 1. ACCOUNT OVERVIEW
+# 1. ACCOUNT OVERVIEW & GLOBAL DATA
 account, positions, orders = get_account_data(api)
+df_ex = get_trade_excursions(api, orders) # <--- MOVED TO GLOBAL SCOPE
 
 if account:
     # Expanded to 6 columns to fit the Alpha Gauge
     col1, col2, col_alpha, col3, col_var, col4 = st.columns(6) 
-    
+
     equity = float(account['equity'])
     last_equity = float(account['last_equity'])
     buying_power = float(account['buying_power'])
-    
+
     daily_pl_pct = (equity - last_equity) / last_equity * 100
     daily_pl_abs = equity - last_equity
-    
+
     # --- NEW: Alpha Calculation ---
     spy_return = get_market_benchmark()
     daily_alpha = daily_pl_pct - spy_return
-    
-    # --- UPGRADED: Fetch distributed telemetry early for VaR ---
+
     trading_state, inference_state = get_cloud_telemetry() 
     json_signals = inference_state.get("tickers", inference_state.get("signals", {}))
 
@@ -1531,27 +1556,23 @@ if account:
             current_atr = 0.03
             if sym in json_signals and isinstance(json_signals[sym], dict):
                 current_atr = json_signals[sym].get("atr_norm", 0.03)
-            
-            # Match the Trading Agent's strict 1.5x SL geometry
+
             active_sl = max(current_atr * 1.5, 0.02)
             total_var += mv * active_sl
-            
+
     var_pct = (total_var / equity) * 100 if equity > 0 else 0.0
-    
+
     col1.metric("Net Liquidity", f"${equity:,.2f}", f"{daily_pl_pct:.2f}%")
     col2.metric("Day P/L", f"${daily_pl_abs:,.2f}")
-    
-    # --- NEW: Alpha Metric ---
     col_alpha.metric("Daily Alpha (vs SPY)", f"{daily_alpha:+.2f}%", f"SPY: {spy_return:+.2f}%", delta_color="normal")
-    
     col3.metric("Buying Power", f"${buying_power:,.2f}")
     col_var.metric("Open Risk (VaR)", f"${total_var:,.2f}", f"-{var_pct:.2f}% Eq", delta_color="inverse")
-    
+
     # Process Logs
     logs = read_bot_logs()
-    
-    # Pass the INFERENCE state to the parser to rebuild the Neural/Lifecycle visuals
-    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs, inference_state)
+
+    # ---> FIX: Pass df_ex into the parser to calculate live metrics <---
+    last_run_str, last_run_dt, parsed_signals, watchlist_data, conviction_data, model_health, neo4j_status = parse_latest_run_logic(logs, inference_state, df_ex)
 
     # --- NEW: WEEKEND PERSISTENCE MEMORY ---
     if conviction_data and len(conviction_data) > 0:
@@ -2016,8 +2037,6 @@ with tab1:
             e1, e2 = st.columns(2)
             st.markdown("#### 🎯 Excursion Analysis (MAE vs MFE)")
             st.caption("Scatter plot of recent closed trades. Identifies if stops are too tight or winners are choked.")
-            
-            df_ex = get_trade_excursions(api, orders)
             
             if not df_ex.empty:
                 fig_ex = px.scatter(
@@ -3060,99 +3079,94 @@ with tab6:
     # --- QUANTUM ALPHA MODEL LIFECYCLE MONITOR ---
     st.subheader("🧠 Quantum Alpha Model Lifecycle Monitor")
     st.markdown("Real-time alignment tracking between weekend optimization blueprints and live out-of-sample market execution.")
-        
-    #st.write(model_health) 
-    # --------------------------------------
 
     if model_health:
-       # Safety Check: If it came through as a string, try to parse it as JSON
         if isinstance(model_health, str):
             try:
-               import json
-               model_health = json.loads(model_health)
+                import json
+                model_health = json.loads(model_health)
             except ValueError:
-               model_health = {} # Fallback to emptyc if it's an unparseable string
+                model_health = {}
 
-       # Only run the dictionary sort if we actually have a dictionary
         if isinstance(model_health, dict):
             sorted_health = sorted(
-               model_health.items(),
-               key=lambda x: 0 if 'DEGRADED' in x[1].get('Status', '') else 1
+                model_health.items(),
+                key=lambda x: 0 if 'DEGRADED' in x[1].get('Status', '') else 1
             )
         else:
-            sorted_health = [] # Fallback to prevent crash
+            sorted_health = []
 
         html_output = ""
         for ticker, profile in sorted_health:
             status = profile['Status']
             base_ir = float(profile['Base IR'])
             live_ir = float(profile['Live IR'])
+            base_wr = float(profile.get('Base WR', 0.0))
+            live_wr = float(profile.get('Live WR', 0.0))
             decay = float(profile['Decay'])
             mdd = int(profile['MDD'])
             base_mdd = int(profile.get('Base MDD', 0))
-            base_wr = float(profile.get('Base WR', 0.0))
-            
+            live_trades = int(profile.get('Trades', 0))
+
             # 1. Main Card Color
             statusColor = '#444' 
             if 'OPTIMAL' in status: statusColor = '#00ff41'
             elif 'STABLE' in status: statusColor = '#ffb000'
             elif 'DEGRADED' in status: statusColor = '#ff4b4b'
-            
+
             # 2. Information Ratio Intelligence
             ir_diff = live_ir - base_ir
-            if live_ir >= base_ir:
+            
+            if live_trades < 5:
+                ir_text = f"currently in a <strong>Warmup Phase ({live_trades}/5 trades)</strong>. Edge decay algorithms will engage once sufficient out-of-sample data is collected against the benchmark IR of {base_ir:.2f}."
+            elif live_ir >= base_ir:
                 ir_text = f"an impressive <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #00ff41;'>outperforming</span> its weekend benchmark ({base_ir:.2f}) by +{ir_diff:.2f}."
             elif live_ir >= 0:
-                ir_text = f"a <strong>Live Information Ratio of {live_ir:.2f}</strong>. While still generating positive alpha, it is <span style='color: #ffb000;'>underperforming</span> its weekend benchmark ({base_ir:.2f}) by {ir_diff:.2f}."
+                ir_text = f"a <strong>Live Information Ratio of {live_ir:.2f}</strong>. While generating positive alpha, it is <span style='color: #ffb000;'>underperforming</span> its weekend benchmark ({base_ir:.2f}) by {ir_diff:.2f}."
             else:
                 ir_text = f"a negative <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #ff4b4b;'>failing</span> to meet its weekend benchmark ({base_ir:.2f}) by a margin of {ir_diff:.2f}."
 
             # 3. Decay Intelligence
             if decay >= 0.70:
-                decay_text = f"The asset decay factor is excellent at <strong>{decay:.2f}</strong> (Target: 1.0), indicating strong structural alignment with the training blueprint."
+                decay_text = f"The asset decay factor is excellent at <strong>{decay:.2f}</strong>, indicating strong structural alignment with the training blueprint."
             elif decay >= 0.40:
                 decay_text = f"The asset decay factor sits at <strong style='color: #ffb000;'>{decay:.2f}</strong>, showing moderate edge erosion but remaining above the 0.40 throttle threshold."
             else:
                 decay_text = f"Severe edge erosion detected with a decay factor of <strong style='color: #ff4b4b;'>{decay:.2f}</strong> (Critically below the 0.40 threshold), triggering autonomous risk throttling."
 
             # 4. Drawdown Intelligence 
-            if mdd <= 21:
-                mdd_text = f"Drawdown duration is safely contained at <strong>{mdd} days</strong> (Optimal: < 21 days)."
-            elif mdd <= 42:
-                mdd_text = f"Drawdown duration is stretching to <strong style='color: #ffb000;'>{mdd} days</strong>, approaching structural pain thresholds."
-            else:
-                mdd_text = f"Drawdown duration has breached limits at <strong style='color: #ff4b4b;'>{mdd} days</strong> (Danger: > 42 days)."
+            if mdd <= 21: mdd_text = f"Drawdown duration is safely contained at <strong>{mdd} days</strong>."
+            elif mdd <= 42: mdd_text = f"Drawdown duration is stretching to <strong style='color: #ffb000;'>{mdd} days</strong>, approaching pain thresholds."
+            else: mdd_text = f"Drawdown duration has breached limits at <strong style='color: #ff4b4b;'>{mdd} days</strong>."
 
-            lifecycle = profile.get('Lifecycle', 'Unknown') # <--- Retrieve the new value
+            lifecycle = profile.get('Lifecycle', 'Unknown') 
 
             # 5. Build the HTML Block with Side-By-Side Comparison Grid
             html_output += f'<div style="margin-bottom: 12px; padding: 15px; border-left: 5px solid {statusColor}; background-color: #1e1e1e; border-radius: 6px;">'
             html_output += f'<strong style="font-size: 1.2em; color: #fff;">{ticker}</strong>'
             html_output += f'<span style="background-color: {statusColor}; color: #111; padding: 3px 8px; border-radius: 4px; font-size: 0.85em; font-weight: bold; margin-left: 10px;">{status}</span>'
-            
-            # --- RENDER LIFECYCLE ---
+
             html_output += f'<div style="margin-top: 8px; font-size: 0.9em; color: #aaa;">'
             html_output += f'<strong>Lifecycle Phase:</strong> <span style="color: #fff;">{lifecycle}</span>'
             html_output += f'</div>'
-            # ------------------------
 
             # --- THE NEW SIDE-BY-SIDE HUD ---
             html_output += f'<div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; color: #aaa; background: #2a2a2a; padding: 10px; border-radius: 4px;">'
             html_output += f'<div><strong style="color: #fff;">🏗️ Training Blueprint</strong><br>Base IR: {base_ir:.2f} &nbsp;|&nbsp; Win Rate: {base_wr:.1f}% &nbsp;|&nbsp; MDD: {base_mdd}d</div>'
-            html_output += f'<div><strong style="color: #fff;">⚡ Live Execution</strong><br>Live IR: {live_ir:.2f} &nbsp;|&nbsp; Decay: {decay:.2f} &nbsp;|&nbsp; MDD: {mdd}d</div>'
+            html_output += f'<div><strong style="color: #fff;">⚡ Live Execution ({live_trades} Trades)</strong><br>Live IR: {live_ir:.2f} &nbsp;|&nbsp; Win Rate: {live_wr:.1f}% &nbsp;|&nbsp; Decay: {decay:.2f}</div>'
             html_output += f'</div>'
             # --------------------------------
-            
+
             html_output += f'<p style="margin: 10px 0 0 0; font-size: 0.95em; line-height: 1.6; color: #ccc;">'
-            html_output += f'The model is currently displaying {ir_text}<br><br>'
-            html_output += f'{decay_text} {mdd_text}'
+            html_output += f'The model is {ir_text}<br><br>'
+            if live_trades >= 5:
+                html_output += f'{decay_text} {mdd_text}'
             html_output += f'</p></div>'
-            
+
         st.markdown(html_output, unsafe_allow_html=True)
-        
+
     else:
         st.info("Awaiting model performance data from the live execution log stream...")
-    # --------------------------------------------------
 
 # Complete Replacement for the AUTO REFRESH LOOP at the end of the file
 # === AUTO REFRESH LOOP ===
