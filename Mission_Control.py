@@ -1836,7 +1836,7 @@ with tab5:
 
     st.divider()
     st.markdown("### 🎢 Portfolio Physics & Trajectory Surface")
-    X_phys, Y_phys, Z_phys, z_traj, phys_status = generate_proxied_ppo_landscape(phys_df, bot_states, conviction_data)
+    X_phys, Y_phys, Z_phys, z_traj, phys_status = generate_proxied_ppo_landscape(phys_df, inference_state, conviction_data)
 
     if not phys_df.empty and X_phys is not None:
         col_text2, col_plot2 = st.columns([1, 3])
