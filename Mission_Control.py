@@ -472,6 +472,7 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                     elif "ABORTED" in status_clean:
                         lifecycle_stage = "🔴 HALTED"
 
+                # ---> FIX: INDENT THIS BLOCK ONE LEVEL TO THE RIGHT <---
                 model_health[ticker] = {
                     "Status": status_clean,
                     "Lifecycle": lifecycle_stage,
@@ -1480,13 +1481,14 @@ with tab3:
         current_equity_raw = float(account['equity'])
         metrics = st.session_state.get('global_metrics', {})
         
-        # --- REPLACED: HIT RATE NOW CALCULATED FROM TIMESCALEDB IF PRESENT ---
-        if not df_ex_db.empty:
-            hit_rate = len(df_ex_db[df_ex_db['Result'] == 'Win']) / len(df_ex_db) if len(df_ex_db) > 0 else 0.0
-            trade_count = len(df_ex_db)
+        # --- FIX: UNIFIED HIT RATE CALCULATION (DB & ALPACA FALLBACK) ---
+        if not df_ex.empty:
+            hit_rate = len(df_ex[df_ex['Result'] == 'Win']) / len(df_ex) if len(df_ex) > 0 else 0.0
+            trade_count = len(df_ex)
         else:
-            # Fallback to Alpaca order parsing
-            hit_rate, trade_count = calculate_trade_hit_rate(orders)
+            # Fallback if there are absolutely 0 trades across all databases/brokers
+            hit_rate, trade_count = 0.0, 0
+        # -----------------------------------------------------------------
         
         scorecard_df = create_scorecard_df(metrics, hit_rate, trade_count)
         inst_score = calculate_institutional_score(metrics)
