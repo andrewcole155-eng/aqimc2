@@ -470,13 +470,17 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                 live_trades = live_metrics.get(ticker, {}).get('Trades', 0)
 
                 mdd_val = data.get("mdd_days", 0)
-                lifecycle_stage = data.get("lifecycle_stage", "Unknown")
                 readiness_status = data.get("readiness_status", "UNKNOWN")
 
-                if readiness_status == "SUSPENDED_BASE_EDGE" or base_ir <= 0.0:
+                # --- FIX: Respect Backend Readiness & Empirical Override Flags ---
+                if readiness_status == "SUSPENDED_BASE_EDGE" or (base_ir <= 0.0 and readiness_status != "READY"):
                     status_clean = "🔴 QUARANTINED (Negative Base Edge)"
                     decay_val = 0.0
                     lifecycle_stage = "🔴 HALTED"
+                elif readiness_status == "READY" and base_ir <= 0.0:
+                    status_clean = "🟢 OPTIMAL (Empirical Override)"
+                    decay_val = 1.0 # Bypass decay penalty
+                    lifecycle_stage = "🟢 ACTIVE (Production)"
                 else:
                     if live_trades >= 5 and base_ir > 0:
                         decay_val = live_ir / base_ir
@@ -502,7 +506,6 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                     elif "ABORTED" in status_clean:
                         lifecycle_stage = "🔴 HALTED"
 
-                # ---> FIX: INDENT THIS BLOCK ONE LEVEL TO THE RIGHT <---
                 model_health[ticker] = {
                     "Status": status_clean,
                     "Lifecycle": lifecycle_stage,
@@ -1970,14 +1973,17 @@ with tab6:
             statusColor = '#00ff41' if 'OPTIMAL' in status else ('#ffb000' if 'STABLE' in status else '#ff4b4b')
             ir_diff = live_ir - base_ir
             
+            # --- FIX: Custom Override UI Text ---
             if 'ABORTED' in status: ir_text = f"experiencing a <strong style='color: #ff4b4b;'>Critical Early Failure</strong>. The warmup phase was terminated early due to extreme out-of-sample losses (Live IR: {live_ir:.2f})."
             elif 'QUARANTINED' in status: ir_text = "currently completely suspended."
+            elif 'Empirical Override' in status: ir_text = f"an impressive <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #00ff41;'>overriding</span> its negative weekend benchmark ({base_ir:.2f})."
             elif live_trades < 5: ir_text = f"currently in a <strong>Warmup Phase ({live_trades}/5 trades)</strong>. Edge decay algorithms will engage once sufficient out-of-sample data is collected against the benchmark IR of {base_ir:.2f}."
             elif live_ir >= base_ir: ir_text = f"an impressive <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #00ff41;'>outperforming</span> its weekend benchmark ({base_ir:.2f}) by +{ir_diff:.2f}."
             elif live_ir >= 0: ir_text = f"a <strong>Live Information Ratio of {live_ir:.2f}</strong>. While generating positive alpha, it is <span style='color: #ffb000;'>underperforming</span> its weekend benchmark ({base_ir:.2f}) by {ir_diff:.2f}."
             else: ir_text = f"a negative <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #ff4b4b;'>failing</span> to meet its weekend benchmark ({base_ir:.2f}) by a margin of {ir_diff:.2f}."
 
-            if decay == 0.0 and base_ir <= 0.0: decay_text = "Model is quarantined due to a negative baseline edge. Trading must be disabled."
+            if 'Empirical Override' in status: decay_text = "The Empirical Override gate is active. Live reality has superseded the validation fold constraint, protecting empirical alpha."
+            elif decay == 0.0 and base_ir <= 0.0: decay_text = "Model is quarantined due to a negative baseline edge. Trading must be disabled."
             elif decay == 1.0 and 'ABORTED' in status: decay_text = "Model execution halted to protect capital."
             elif decay >= 0.70: decay_text = f"The asset decay factor is excellent at <strong>{decay:.2f}</strong>, indicating strong structural alignment with the training blueprint."
             elif decay >= 0.40: decay_text = f"The asset decay factor sits at <strong style='color: #ffb000;'>{decay:.2f}</strong>, showing moderate edge erosion but remaining above the 0.40 throttle threshold."
@@ -1996,7 +2002,7 @@ with tab6:
             html_output += f'<div><strong style="color: #fff;">🏗️ Training Blueprint</strong><br>Base IR: {base_ir:.2f} &nbsp;|&nbsp; Win Rate: {base_wr:.1f}% &nbsp;|&nbsp; MDD: {base_mdd}d</div>'
             html_output += f'<div><strong style="color: #fff;">⚡ Live Execution ({live_trades} Trades)</strong><br>Live IR: {live_ir:.2f} &nbsp;|&nbsp; Win Rate: {live_wr:.1f}% &nbsp;|&nbsp; Decay: {decay:.2f}</div>'
             html_output += f'</div><p style="margin: 10px 0 0 0; font-size: 0.95em; line-height: 1.6; color: #ccc;">The model is {ir_text}<br><br>'
-            if live_trades >= 5: html_output += f'{decay_text} {mdd_text}'
+            if live_trades >= 5 or 'Empirical' in status: html_output += f'{decay_text} {mdd_text}'
             html_output += f'</p></div>'
 
         st.markdown(html_output, unsafe_allow_html=True)
