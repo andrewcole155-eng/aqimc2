@@ -1055,8 +1055,21 @@ if not df_ex_db.empty:
 else:
     df_ex = get_trade_excursions(api, orders)
 
+# === STATE INITIALIZATION FIX ===
+# Prevents NameErrors if Alpaca rate-limits or returns None for 'account'
+logs = []
+trading_state, inference_state = {}, {}
+model_health = st.session_state.get('saved_model_health', {})
+conviction_data = st.session_state.get('saved_conviction', {})
+parsed_signals = st.session_state.get('saved_signals', {})
+watchlist_data = st.session_state.get('saved_watchlist', [])
+last_run_str = "API Offline/Connecting..."
+last_run_dt = None
+neo4j_status = "Unknown"
+# ================================
+
 if account:
-    col1, col2, col_alpha, col3, col_var, col4 = st.columns(6) 
+    col1, col2, col_alpha, col3, col_var, col4 = st.columns(6)
 
     equity, last_equity, buying_power = float(account['equity']), float(account['last_equity']), float(account['buying_power'])
     daily_pl_pct, daily_pl_abs = (equity - last_equity) / last_equity * 100, equity - last_equity
