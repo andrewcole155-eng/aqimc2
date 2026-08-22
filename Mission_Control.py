@@ -185,28 +185,35 @@ def get_cloud_telemetry():
         st.warning(f"Telemetry Sync Warning: {e}")
         return {}, {}
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def get_account_data(_api):
     try:
         account = _api.get_account()._raw
         positions = [p._raw for p in _api.list_positions()]
         
-        # Paged fetch to retrieve full lifetime fill history (up to 2,000 fills)
+        # Paged fetch using 'until' timestamp (Alpaca's correct order pagination)
         all_orders = []
-        page_token = None
-        for _ in range(4):  # 4 pages * 500 = 2,000 fills
-            params = {'status': 'filled', 'limit': 500, 'direction': 'desc'}
-            if page_token:
-                params['page_token'] = page_token
-            batch = _api.list_orders(**params)
+        until_dt = None
+        
+        for _ in range(4):  # Fetch up to 2,000 fills
+            if until_dt:
+                batch = _api.list_orders(status='filled', limit=500, direction='desc', until=until_dt)
+            else:
+                batch = _api.list_orders(status='filled', limit=500, direction='desc')
+                
             if not batch:
                 break
+                
             all_orders.extend([o._raw for o in batch])
+            
             if len(batch) < 500:
                 break
-            page_token = batch[-1].id
+                
+            # Set the 'until' cursor to the oldest order's time in this batch
+            until_dt = batch[-1].submitted_at
             
         return account, positions, all_orders
+        
     except Exception as e:
         print(f"Alpaca Account Fetch Error: {e}")
         return None, [], []
