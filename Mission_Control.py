@@ -224,10 +224,6 @@ def get_account_data(_api):
         # If pagination fails, we simply return the orders successfully fetched so far
         
     return account, positions, all_orders
-        
-    except Exception as e:
-        print(f"Alpaca Account Fetch Error: {e}")
-        return None, [], []
 
 @st.cache_data(ttl=3600)
 def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
