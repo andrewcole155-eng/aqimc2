@@ -187,20 +187,27 @@ def get_cloud_telemetry():
 
 @st.cache_data(ttl=60)
 def get_account_data(_api):
+    account = None
+    positions = []
+    all_orders = []
+    
+    # 1. Fetch Core Account Data Safely
     try:
         account = _api.get_account()._raw
         positions = [p._raw for p in _api.list_positions()]
+    except Exception as e:
+        print(f"Alpaca Account Fetch Error: {e}")
+        return None, [], []
         
-        # Paged fetch using 'until' timestamp (Alpaca's correct order pagination)
-        all_orders = []
+    # 2. Fetch Orders Safely (Decoupled from Account)
+    try:
         until_dt = None
-        
         for _ in range(4):  # Fetch up to 2,000 fills
+            params = {'status': 'filled', 'limit': 500, 'direction': 'desc'}
             if until_dt:
-                batch = _api.list_orders(status='filled', limit=500, direction='desc', until=until_dt)
-            else:
-                batch = _api.list_orders(status='filled', limit=500, direction='desc')
+                params['until'] = until_dt
                 
+            batch = _api.list_orders(**params)
             if not batch:
                 break
                 
@@ -209,13 +216,14 @@ def get_account_data(_api):
             if len(batch) < 500:
                 break
                 
-            # Safely grab the timestamp of the oldest order in the batch to paginate backwards
-            try:
-                until_dt = pd.to_datetime(batch[-1]._raw.get('submitted_at')).isoformat()
-            except Exception:
-                break
+            # Safe string conversion for pagination
+            until_dt = str(batch[-1].submitted_at)
             
-        return account, positions, all_orders
+    except Exception as e:
+        print(f"Alpaca Orders Pagination Error (Safe Continue): {e}")
+        # If pagination fails, we simply return the orders successfully fetched so far
+        
+    return account, positions, all_orders
         
     except Exception as e:
         print(f"Alpaca Account Fetch Error: {e}")
