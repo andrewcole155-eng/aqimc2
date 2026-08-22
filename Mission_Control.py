@@ -209,8 +209,11 @@ def get_account_data(_api):
             if len(batch) < 500:
                 break
                 
-            # Set the 'until' cursor to the oldest order's time in this batch
-            until_dt = batch[-1].submitted_at
+            # Safely grab the timestamp of the oldest order in the batch to paginate backwards
+            try:
+                until_dt = pd.to_datetime(batch[-1]._raw.get('submitted_at')).isoformat()
+            except Exception:
+                break
             
         return account, positions, all_orders
         
