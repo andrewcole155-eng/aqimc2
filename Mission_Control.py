@@ -465,8 +465,6 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                 base_wr = data.get("base_wr", 0.0) * 100.0
                 base_mdd = data.get("base_mdd_days", 0)
 
-                # --- FIX: Read Live IR directly from the Backend Payload ---
-                # Only fallback to local Alpaca calculation if the backend doesn't provide it
                 payload_live_ir = data.get("live_ir")
                 live_ir = float(payload_live_ir) if payload_live_ir is not None else live_metrics.get(ticker, {}).get('Live IR', 0.0)
                 
@@ -475,6 +473,11 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
 
                 mdd_val = data.get("mdd_days", 0)
                 readiness_status = data.get("readiness_status", "UNKNOWN")
+
+                # --- FRONTEND EMPIRICAL OVERRIDE ---
+                # Independently verify live performance so the UI never visually halts a proven asset
+                if live_trades >= 15 and live_ir >= 1.0:
+                    readiness_status = "READY"
 
                 # --- FIX: Respect Backend Readiness & Empirical Override Flags ---
                 if readiness_status == "SUSPENDED_BASE_EDGE" or (base_ir <= 0.0 and readiness_status != "READY"):
