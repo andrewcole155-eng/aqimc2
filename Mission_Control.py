@@ -465,7 +465,11 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                 base_wr = data.get("base_wr", 0.0) * 100.0
                 base_mdd = data.get("base_mdd_days", 0)
 
-                live_ir = live_metrics.get(ticker, {}).get('Live IR', 0.0)
+                # --- FIX: Read Live IR directly from the Backend Payload ---
+                # Only fallback to local Alpaca calculation if the backend doesn't provide it
+                payload_live_ir = data.get("live_ir")
+                live_ir = float(payload_live_ir) if payload_live_ir is not None else live_metrics.get(ticker, {}).get('Live IR', 0.0)
+                
                 live_wr = live_metrics.get(ticker, {}).get('Live WR', 0.0)
                 live_trades = live_metrics.get(ticker, {}).get('Trades', 0)
 
