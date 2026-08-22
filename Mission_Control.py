@@ -190,9 +190,25 @@ def get_account_data(_api):
     try:
         account = _api.get_account()._raw
         positions = [p._raw for p in _api.list_positions()]
-        orders = [o._raw for o in _api.list_orders(status='filled', limit=500, direction='desc')]
-        return account, positions, orders
-    except:
+        
+        # Paged fetch to retrieve full lifetime fill history (up to 2,000 fills)
+        all_orders = []
+        page_token = None
+        for _ in range(4):  # 4 pages * 500 = 2,000 fills
+            params = {'status': 'filled', 'limit': 500, 'direction': 'desc'}
+            if page_token:
+                params['page_token'] = page_token
+            batch = _api.list_orders(**params)
+            if not batch:
+                break
+            all_orders.extend([o._raw for o in batch])
+            if len(batch) < 500:
+                break
+            page_token = batch[-1].id
+            
+        return account, positions, all_orders
+    except Exception as e:
+        print(f"Alpaca Account Fetch Error: {e}")
         return None, [], []
 
 @st.cache_data(ttl=3600)
@@ -204,48 +220,48 @@ def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
         "asset_index_map": {
             # 1. TECHNOLOGY (XLK)
             "CSCO": "Tech/Hardware",
-            "HPE": "Tech/Hardware",
             "IONQ": "Tech/Quantum",
-            "PYPL": "Financials",
             "INTC": "Tech/Semis",
             
-            # 2. FINANCIALS (XLF)
-            "BAC": "Financials",
-            "SOFI": "Financials",
-            "WFC": "Financials",
+            # 2. COMMUNICATION SERVICES (XLC)
+            "T": "Communication Services",
+            "CMCSA": "Communication Services",
+            "PINS": "Communication Services",
             
-            # 3. CONSUMER STAPLES (XLP)
-            "KO": "Consumer Defensive",
-            "KR": "Consumer Defensive",
-            "KHC": "Consumer Defensive",
+            # 3. ENERGY (XLE)
+            "OXY": "Energy",
+            "SLB": "Energy",
+            "HAL": "Energy",
             
             # 4. HEALTHCARE (XLV)
             "PFE": "Healthcare",
             "VTRS": "Healthcare",
+            "BMY": "Healthcare",
             
-            # 5. CONSUMER DISCRETIONARY (XLY)
+            # 5. INDUSTRIALS (XLI)
+            "DAL": "Industrials",
+            "AAL": "Industrials",
+            "CSX": "Industrials",
+            
+            # 6. FINANCIALS (XLF)
+            "BAC": "Financials",
+            "SOFI": "Financials",
+            "WFC": "Financials",
+            
+            # 7. CONSUMER STAPLES (XLP)
+            "KO": "Consumer Defensive",
+            "KR": "Consumer Defensive",
+            "KHC": "Consumer Defensive",
+            
+            # 8. CONSUMER DISCRETIONARY (XLY)
             "CCL": "Consumer Cyclical",
             "F": "Consumer Cyclical",
             "GM": "Consumer Cyclical",
             
-            # 6. COMMUNICATION SERVICES (XLC)
-            "T": "Communication Services",
-            "CMCSA": "Communication Services",
-            "PINS": "Communication Services",
-            "RBLX": "Communication Services",
-            
-            # 7. ENERGY (XLE)
-            "OXY": "Energy",
-            "SLB": "Energy",
-            
-            # 8. BASIC MATERIALS & MINING (XME)
+            # 9. BASIC MATERIALS & MINING (XME)
             "FCX": "Basic Materials",
             "CLF": "Basic Materials",
             "VALE": "Basic Materials",
-            
-            # 9. INDUSTRIALS (XLI)
-            "DAL": "Industrials",
-            "AAL": "Industrials",
         }
     }
 
@@ -532,78 +548,76 @@ def get_market_benchmark():
 
 @st.cache_data(ttl=3600)
 def get_trade_excursions(_api, orders):
-    """Fallback method if TimescaleDB is offline."""
-    if not orders: return pd.DataFrame()
-    trades = []
-    filled_orders = sorted([o for o in orders if isinstance(o, dict) and o.get('status') == 'filled'], 
-                           key=lambda x: x.get('filled_at', ''))
+    """Fallback method if TimescaleDB is offline. Reconstructs all lifetime round-trip trades."""
+    if not orders:
+        return pd.DataFrame()
+        
+    filled_orders = sorted(
+        [o for o in orders if isinstance(o, dict) and o.get('status') == 'filled'],
+        key=lambda x: x.get('filled_at', '')
+    )
     
+    trades = []
     inventory = {}
+    
     for o in filled_orders:
         sym = o.get('symbol')
         side = o.get('side')
         qty = float(o.get('filled_qty', 0))
         price = float(o.get('filled_avg_price', 0))
-        try: t = pd.to_datetime(o.get('filled_at')).tz_convert('UTC')
-        except: continue
+        
+        try:
+            t = pd.to_datetime(o.get('filled_at')).tz_convert('UTC')
+        except Exception:
+            continue
             
-        if sym not in inventory: inventory[sym] = {'qty': 0, 'cost': 0, 'entry_time': t, 'side': None}
+        if sym not in inventory:
+            inventory[sym] = {'qty': 0.0, 'cost': 0.0, 'entry_time': t, 'side': None}
         inv = inventory[sym]
         
         if inv['qty'] == 0:
-            inv['side'] = side; inv['cost'] = price; inv['entry_time'] = t; inv['qty'] += qty
+            inv['side'] = side
+            inv['cost'] = price
+            inv['entry_time'] = t
+            inv['qty'] += qty
         else:
             if inv['side'] == side:
+                # Weighted average entry
                 inv['cost'] = ((inv['cost'] * inv['qty']) + (price * qty)) / (inv['qty'] + qty)
                 inv['qty'] += qty
             else:
                 closed_qty = min(inv['qty'], qty)
                 inv['qty'] -= closed_qty
                 if closed_qty > 0:
+                    entry_p = inv['cost']
+                    exit_p = price
+                    if inv['side'] == 'buy':
+                        pnl_pct = ((exit_p - entry_p) / entry_p) * 100.0
+                        trade_type = 'Long'
+                    else:
+                        pnl_pct = ((entry_p - exit_p) / entry_p) * 100.0
+                        trade_type = 'Short'
+                        
                     trades.append({
-                        'Ticker': sym, 'Type': 'Long' if inv['side'] == 'buy' else 'Short',
-                        'Entry_Time': inv['entry_time'], 'Exit_Time': t, 'Entry_Price': inv['cost'], 'Exit_Price': price,
+                        'Ticker': sym,
+                        'Type': trade_type,
+                        'Entry_Time': inv['entry_time'],
+                        'Exit_Time': t,
+                        'Entry_Price': entry_p,
+                        'Exit_Price': exit_p,
+                        'PnL (%)': pnl_pct,
+                        'Result': 'Win' if pnl_pct > 0 else 'Loss',
+                        'MAE (%)': -abs(pnl_pct) if pnl_pct < 0 else 0.0,
+                        'MFE (%)': pnl_pct if pnl_pct > 0 else 0.0,
+                        'Slippage (%)': 0.0
                     })
-                if inv['qty'] == 0: inv['side'] = None
+                if inv['qty'] == 0:
+                    inv['side'] = None
 
-    recent_trades = trades[-25:]
-    excursion_data = []
-    if not recent_trades: return pd.DataFrame()
-    
-    start_date = min([t['Entry_Time'] for t in recent_trades]).strftime('%Y-%m-%d')
-    end_date = (max([t['Exit_Time'] for t in recent_trades]) + timedelta(days=2)).strftime('%Y-%m-%d')
-    tickers = list(set([t['Ticker'] for t in recent_trades]))
-    
-    try: yf_data = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', progress=False, threads=False)
-    except Exception: return pd.DataFrame() 
-
-    for t in recent_trades:
-        sym = t['Ticker']
-        try:
-            df_sym = yf_data if len(tickers) == 1 else yf_data[sym]
-            trade_mask = (df_sym.index >= t['Entry_Time'].strftime('%Y-%m-%d')) & (df_sym.index <= (t['Exit_Time'] + timedelta(days=1)).strftime('%Y-%m-%d'))
-            df_trade = df_sym.loc[trade_mask]
-            
-            if not df_trade.empty:
-                trade_high = float(df_trade['High'].max())
-                trade_low = float(df_trade['Low'].min())
-                entry = t['Entry_Price']
-                exit_p = t['Exit_Price']
-                
-                if t['Type'] == 'Long':
-                    mfe = (trade_high - entry) / entry * 100
-                    mae = (entry - trade_low) / entry * 100 
-                    pnl = (exit_p - entry) / entry * 100
-                else:
-                    mfe = (entry - trade_low) / entry * 100
-                    mae = (trade_high - entry) / entry * 100
-                    pnl = (entry - exit_p) / entry * 100
-                    
-                t['MFE (%)'], t['MAE (%)'], t['PnL (%)'] = mfe, -mae, pnl
-                t['Result'] = 'Win' if pnl > 0 else 'Loss'
-                excursion_data.append(t)
-        except Exception: continue
-    return pd.DataFrame(excursion_data)
+    if not trades:
+        return pd.DataFrame()
+        
+    return pd.DataFrame(trades)
 
 @st.cache_data(ttl=3600)
 def get_correlation_matrix(tickers):
