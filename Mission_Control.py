@@ -216,8 +216,8 @@ def get_account_data(_api):
             if len(batch) < 500:
                 break
                 
-            # Safe string conversion for pagination
-            until_dt = str(batch[-1].submitted_at)
+            # --- FIX: Safe string conversion for Alpaca pagination ---
+            until_dt = pd.to_datetime(str(batch[-1].submitted_at)).tz_convert('UTC').strftime('%Y-%m-%dT%H:%M:%SZ')
             
     except Exception as e:
         print(f"Alpaca Orders Pagination Error (Safe Continue): {e}")
@@ -1477,8 +1477,15 @@ with tab1:
                     if isinstance(o, dict) and o.get('status') == 'filled':
                         t = o.get('filled_at', '')
                         t_fmt = t[5:16].replace('T', ' ') if len(t) >= 16 else t
-                        limit_price, fill_price = float(o.get('limit_price', 0)) if o.get('limit_price') else 0.0, float(o.get('filled_avg_price', 0)) if o.get('filled_avg_price') else 0.0
-                        slippage = (((fill_price - limit_price) / limit_price) * 100) if o.get('side') == 'buy' else (((limit_price - fill_price) / limit_price) * 100) if limit_price > 0 and fill_price > 0 else 0.0
+                        limit_price = float(o.get('limit_price', 0)) if o.get('limit_price') else 0.0
+                        fill_price = float(o.get('filled_avg_price', 0)) if o.get('filled_avg_price') else 0.0
+                        
+                        # --- FIX: Prevent Division by Zero on Market Orders ---
+                        if limit_price > 0 and fill_price > 0:
+                            slippage = (((fill_price - limit_price) / limit_price) * 100) if o.get('side') == 'buy' else (((limit_price - fill_price) / limit_price) * 100)
+                        else:
+                            slippage = 0.0
+                            
                         order_data.append({"Time": t_fmt, "Ticker": o.get('symbol', 'N/A'), "Side": o.get('side', 'N/A').upper(), "Qty": o.get('filled_qty', '0'), "Fill Price": f"${fill_price:.2f}", "Slippage": f"{slippage:+.2f}%" if limit_price > 0 else "N/A (MKT)"})
 
         if order_data:
