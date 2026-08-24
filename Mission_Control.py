@@ -228,54 +228,32 @@ def get_account_data(_api):
 @st.cache_data(ttl=3600)
 def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
     """Dynamically loads the master configuration for Universe Mapping."""
-    import os
-    
-    fallback_config = {
+    # Force Mission Control to strictly use the 12-ticker production matrix
+    return {
         "asset_index_map": {
             # 1. TECHNOLOGY (XLK)
-            "CSCO": "Tech/Hardware",
             "IONQ": "Tech/Quantum",
-            "INTC": "Tech/Semis",
+            "PYPL": "Tech/FinTech",
+            "ZETA": "Tech/Software",
+            "NTNX": "Tech/Cloud",
             
             # 2. COMMUNICATION SERVICES (XLC)
-            "T": "Communication Services",
-            "CMCSA": "Communication Services",
-            "PINS": "Communication Services",
+            "CNK":  "Communication Services",
             
             # 3. ENERGY (XLE)
-            "OXY": "Energy",
-            "SLB": "Energy",
-            "HAL": "Energy",
+            "OXY":  "Energy",
             
             # 4. HEALTHCARE (XLV)
-            "PFE": "Healthcare",
-            "VTRS": "Healthcare",
-            "BMY": "Healthcare",
+            "BMY":  "Healthcare",
+            "QGEN": "Healthcare/MedTech",
             
-            # 5. INDUSTRIALS (XLI)
-            "DAL": "Industrials",
-            "AAL": "Industrials",
-            "CSX": "Industrials",
+            # 5. FINANCIALS (XLF)
+            "TPG":  "Financials",
+            "HRB":  "Financials",
             
-            # 6. FINANCIALS (XLF)
-            "BAC": "Financials",
-            "SOFI": "Financials",
-            "WFC": "Financials",
-            
-            # 7. CONSUMER STAPLES (XLP)
-            "KO": "Consumer Defensive",
-            "KR": "Consumer Defensive",
-            "KHC": "Consumer Defensive",
-            
-            # 8. CONSUMER DISCRETIONARY (XLY)
-            "CCL": "Consumer Cyclical",
-            "F": "Consumer Cyclical",
-            "GM": "Consumer Cyclical",
-            
-            # 9. BASIC MATERIALS & MINING (XME)
-            "FCX": "Basic Materials",
-            "CLF": "Basic Materials",
-            "VALE": "Basic Materials",
+            # 6. CONSUMER STAPLES (XLP)
+            "KO":   "Consumer Defensive",
+            "FRPT": "Consumer Defensive"
         }
     }
 
@@ -1970,7 +1948,12 @@ with tab6:
         if isinstance(model_health, str):
             try: model_health = json.loads(model_health)
             except ValueError: model_health = {}
-        sorted_health = sorted(model_health.items(), key=lambda x: 0 if 'DEGRADED' in x[1].get('Status', '') else 1) if isinstance(model_health, dict) else []
+            
+        # --- NEW: Filter out "ghost" models from previous runs ---
+        valid_tickers = load_global_config().get("asset_index_map", {}).keys()
+        filtered_health = {k: v for k, v in model_health.items() if k in valid_tickers}
+        
+        sorted_health = sorted(filtered_health.items(), key=lambda x: 0 if 'DEGRADED' in x[1].get('Status', '') else 1) if isinstance(filtered_health, dict) else []
 
         html_output = ""
         for ticker, profile in sorted_health:
