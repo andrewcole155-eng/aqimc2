@@ -681,6 +681,10 @@ def calculate_advanced_metrics(hist_df):
     years_active = days_active / 365.25
     
     start_equity, end_equity = float(df['equity'].iloc[0]), float(df['equity'].iloc[-1])
+    
+    # --- NEW: Calculate absolute Total Return ---
+    total_return = (end_equity / start_equity) - 1 if pd.notna(start_equity) and start_equity > 0 else 0.0
+    
     cagr = (end_equity / start_equity) ** (1 / years_active) - 1 if pd.notna(start_equity) and start_equity > 0 and years_active > 0 else 0.0
     
     df['peak'] = df['equity'].cummax()
@@ -733,11 +737,25 @@ def calculate_advanced_metrics(hist_df):
     exposure_efficiency = cagr / exposure_pct if exposure_pct > 0 else 0
 
     return {
-        "CAGR": cagr, "Max Drawdown": max_dd, "Recovery Time": max_underwater_days, "Ulcer Index": ulcer_index,
-        "Sharpe Ratio": sharpe, "Sortino Ratio": sortino, "Information Ratio": information_ratio, "MAR Ratio": mar,
-        "Profit Factor": profit_factor, "Win Rate (Daily)": win_rate, "Expectancy": expectancy, "SQN": sqn,
-        "Omega Ratio": omega_ratio, "Skewness": skewness_val, "Kurtosis": kurt, "CVaR (95%)": cvar_95,
-        "Gain-to-Pain": gain_to_pain, "Exposure Efficiency": exposure_efficiency
+        "Total Return": total_return,  # <-- ADDED THIS LINE
+        "CAGR": cagr, 
+        "Max Drawdown": max_dd, 
+        "Recovery Time": max_underwater_days, 
+        "Ulcer Index": ulcer_index,
+        "Sharpe Ratio": sharpe, 
+        "Sortino Ratio": sortino, 
+        "Information Ratio": information_ratio, 
+        "MAR Ratio": mar,
+        "Profit Factor": profit_factor, 
+        "Win Rate (Daily)": win_rate, 
+        "Expectancy": expectancy, 
+        "SQN": sqn,
+        "Omega Ratio": omega_ratio, 
+        "Skewness": skewness_val, 
+        "Kurtosis": kurt, 
+        "CVaR (95%)": cvar_95,
+        "Gain-to-Pain": gain_to_pain, 
+        "Exposure Efficiency": exposure_efficiency
     }
 
 def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d):
@@ -745,7 +763,9 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     Constructs a dual-horizon performance scorecard comparing Lifetime vs. Trailing 30-Day performance against institutional targets.
     """
     def eval_verdict(metric_name, val):
-        if metric_name == "CAGR":
+        if metric_name == "Total Return":
+            return "🏆 Elite" if val >= 0.50 else ("📈 Profitable" if val > 0 else "🔻 Loss")
+        elif metric_name == "CAGR":
             return "🏆 Elite" if val > 0.20 else ("✅ Target" if val >= 0.10 else "😐 Std")
         elif metric_name == "MAR":
             return "🚀 Elite" if val > 1.0 else "😐 Std"
@@ -766,6 +786,7 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
         return "—"
 
     # Extract lifetime metrics
+    tot_all = metrics_all.get('Total Return', 0.0)
     cagr_all = metrics_all.get('CAGR', 0.0)
     mar_all = metrics_all.get('MAR Ratio', 0.0)
     mdd_all = metrics_all.get('Max Drawdown', 0.0)
@@ -776,6 +797,7 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     wr_all = metrics_all.get('Win Rate (Daily)', 0.0)
 
     # Extract 30-day metrics
+    tot_30 = metrics_30d.get('Total Return', 0.0)
     cagr_30 = metrics_30d.get('CAGR', 0.0)
     mar_30 = metrics_30d.get('MAR Ratio', 0.0)
     mdd_30 = metrics_30d.get('Max Drawdown', 0.0)
@@ -786,6 +808,7 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     wr_30 = metrics_30d.get('Win Rate (Daily)', 0.0)
 
     data = [
+        {"METRIC": "Total Cumulative Return", "LIFETIME": f"{tot_all:.1%}", "VERDICT_ALL": eval_verdict("Total Return", tot_all), "30D": f"{tot_30:.1%}", "TARGET": "> 0%", "VERDICT_30D": eval_verdict("Total Return", tot_30)},
         {"METRIC": "CAGR (Account)", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "30D": f"{cagr_30:.1%}", "TARGET": "> 20%", "VERDICT_30D": eval_verdict("CAGR", cagr_30)},
         {"METRIC": "MAR Ratio", "LIFETIME": f"{mar_all:.2f}", "VERDICT_ALL": eval_verdict("MAR", mar_all), "30D": f"{mar_30:.2f}", "TARGET": "> 1.0", "VERDICT_30D": eval_verdict("MAR", mar_30)},
         {"METRIC": "Max Drawdown", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Max Drawdown", mdd_all), "30D": f"{mdd_30:.1%}", "TARGET": "< 15%", "VERDICT_30D": eval_verdict("Max Drawdown", mdd_30)},
@@ -1629,7 +1652,7 @@ with tab3:
                     "TARGET": st.column_config.TextColumn("Target", width="small"),
                     "VERDICT_30D": st.column_config.TextColumn("30D Verdict", width="small"),
                 },
-                height=360
+                height=400
             )
 
         st.divider()
