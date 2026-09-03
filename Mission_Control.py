@@ -740,17 +740,61 @@ def calculate_advanced_metrics(hist_df):
         "Gain-to-Pain": gain_to_pain, "Exposure Efficiency": exposure_efficiency
     }
 
-def create_scorecard_df(metrics, hit_rate, trade_count):
+def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d):
+    """
+    Constructs a dual-horizon performance scorecard comparing Lifetime vs. Trailing 30-Day performance against institutional targets.
+    """
+    def eval_verdict(metric_name, val):
+        if metric_name == "CAGR":
+            return "🏆 Elite" if val > 0.20 else ("✅ Target" if val >= 0.10 else "😐 Std")
+        elif metric_name == "MAR":
+            return "🚀 Elite" if val > 1.0 else "😐 Std"
+        elif metric_name == "Max Drawdown":
+            return "🛡️ Safe" if abs(val) < 0.15 else "⚠️ High Risk"
+        elif metric_name == "Recovery Time":
+            return "⚡ Fast" if val < 30 else "🐢 Slow"
+        elif metric_name == "Sharpe":
+            return "🔥 Good" if val > 1.5 else ("✅ Target" if val >= 1.0 else "😐 Std")
+        elif metric_name == "Sortino":
+            return "💎 Strong" if val > 2.0 else "😐 Std"
+        elif metric_name == "Profit Factor":
+            return "💰 Rich" if val > 1.5 else "😐 Std"
+        elif metric_name == "Daily Reliability":
+            return "✅ Stable" if val > 0.50 else "🔻 Low"
+        elif metric_name == "Trade Hit Rate":
+            return "🎯 Sniper" if val >= 0.45 else "😐 Std"
+        return "—"
+
+    # Extract lifetime metrics
+    cagr_all = metrics_all.get('CAGR', 0.0)
+    mar_all = metrics_all.get('MAR Ratio', 0.0)
+    mdd_all = metrics_all.get('Max Drawdown', 0.0)
+    rec_all = metrics_all.get('Recovery Time', 0)
+    shp_all = metrics_all.get('Sharpe Ratio', 0.0)
+    srt_all = metrics_all.get('Sortino Ratio', 0.0)
+    pf_all = metrics_all.get('Profit Factor', 0.0)
+    wr_all = metrics_all.get('Win Rate (Daily)', 0.0)
+
+    # Extract 30-day metrics
+    cagr_30 = metrics_30d.get('CAGR', 0.0)
+    mar_30 = metrics_30d.get('MAR Ratio', 0.0)
+    mdd_30 = metrics_30d.get('Max Drawdown', 0.0)
+    rec_30 = metrics_30d.get('Recovery Time', 0)
+    shp_30 = metrics_30d.get('Sharpe Ratio', 0.0)
+    srt_30 = metrics_30d.get('Sortino Ratio', 0.0)
+    pf_30 = metrics_30d.get('Profit Factor', 0.0)
+    wr_30 = metrics_30d.get('Win Rate (Daily)', 0.0)
+
     data = [
-        {"METRIC": "CAGR (Account)", "YOURS": f"{metrics.get('CAGR', 0):.1%}", "BENCHMARK": "> 20%", "VERDICT": "🏆 Elite" if metrics.get('CAGR', 0) > 0.2 else "😐 Std"},
-        {"METRIC": "MAR Ratio", "YOURS": f"{metrics.get('MAR Ratio', 0):.2f}", "BENCHMARK": "> 1.0", "VERDICT": "🚀 Elite" if metrics.get('MAR Ratio', 0) > 1.0 else "😐 Std"},
-        {"METRIC": "Max Drawdown", "YOURS": f"{metrics.get('Max Drawdown', 0):.1%}", "BENCHMARK": "< 15%", "VERDICT": "🛡️ Safe" if abs(metrics.get('Max Drawdown', 0)) < 0.15 else "⚠️ High Risk"},
-        {"METRIC": "Recovery Time", "YOURS": f"{metrics.get('Recovery Time', 0)} Days", "BENCHMARK": "< 30 Days", "VERDICT": "⚡ Fast" if metrics.get('Recovery Time', 0) < 30 else "🐢 Slow"},
-        {"METRIC": "Sharpe Ratio", "YOURS": f"{metrics.get('Sharpe Ratio', 0):.2f}", "BENCHMARK": "> 1.5", "VERDICT": "🔥 Good" if metrics.get('Sharpe Ratio', 0) > 1.5 else "😐 Std"},
-        {"METRIC": "Sortino Ratio", "YOURS": f"{metrics.get('Sortino Ratio', 0):.2f}", "BENCHMARK": "> 2.0", "VERDICT": "💎 Strong" if metrics.get('Sortino Ratio', 0) > 2.0 else "😐 Std"},
-        {"METRIC": "Profit Factor", "YOURS": f"{metrics.get('Profit Factor', 0):.2f}", "BENCHMARK": "> 1.5", "VERDICT": "💰 Rich" if metrics.get('Profit Factor', 0) > 1.5 else "😐 Std"},
-        {"METRIC": "Daily Reliability", "YOURS": f"{metrics.get('Win Rate (Daily)', 0):.0%}", "BENCHMARK": "50-55%", "VERDICT": "✅ Stable" if metrics.get('Win Rate (Daily)', 0) > 0.5 else "🔻 Low"},
-        {"METRIC": "Trade Hit Rate", "YOURS": f"{hit_rate:.0%} ({trade_count} Trades)", "BENCHMARK": "40-50%", "VERDICT": "🎯 Sniper" if hit_rate >= 0.45 else "😐 Std"},
+        {"METRIC": "CAGR (Account)", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "30D": f"{cagr_30:.1%}", "TARGET": "> 20%", "VERDICT_30D": eval_verdict("CAGR", cagr_30)},
+        {"METRIC": "MAR Ratio", "LIFETIME": f"{mar_all:.2f}", "VERDICT_ALL": eval_verdict("MAR", mar_all), "30D": f"{mar_30:.2f}", "TARGET": "> 1.0", "VERDICT_30D": eval_verdict("MAR", mar_30)},
+        {"METRIC": "Max Drawdown", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Max Drawdown", mdd_all), "30D": f"{mdd_30:.1%}", "TARGET": "< 15%", "VERDICT_30D": eval_verdict("Max Drawdown", mdd_30)},
+        {"METRIC": "Recovery Time", "LIFETIME": f"{rec_all} Days", "VERDICT_ALL": eval_verdict("Recovery Time", rec_all), "30D": f"{rec_30} Days", "TARGET": "< 30 Days", "VERDICT_30D": eval_verdict("Recovery Time", rec_30)},
+        {"METRIC": "Sharpe Ratio", "LIFETIME": f"{shp_all:.2f}", "VERDICT_ALL": eval_verdict("Sharpe", shp_all), "30D": f"{shp_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Sharpe", shp_30)},
+        {"METRIC": "Sortino Ratio", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "30D": f"{srt_30:.2f}", "TARGET": "> 2.0", "VERDICT_30D": eval_verdict("Sortino", srt_30)},
+        {"METRIC": "Profit Factor", "LIFETIME": f"{pf_all:.2f}", "VERDICT_ALL": eval_verdict("Profit Factor", pf_all), "30D": f"{pf_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Profit Factor", pf_30)},
+        {"METRIC": "Daily Reliability", "LIFETIME": f"{wr_all:.0%}", "VERDICT_ALL": eval_verdict("Daily Reliability", wr_all), "30D": f"{wr_30:.0%}", "TARGET": "50-55%", "VERDICT_30D": eval_verdict("Daily Reliability", wr_30)},
+        {"METRIC": "Trade Hit Rate", "LIFETIME": f"{hit_rate_all:.0%} ({trades_all})", "VERDICT_ALL": eval_verdict("Trade Hit Rate", hit_rate_all), "30D": f"{hit_rate_30d:.0%} ({trades_30d})", "TARGET": "40-50%", "VERDICT_30D": eval_verdict("Trade Hit Rate", hit_rate_30d)},
     ]
     return pd.DataFrame(data)
 
@@ -1517,16 +1561,28 @@ with tab3:
         current_equity_raw = float(account['equity'])
         metrics = st.session_state.get('global_metrics', {})
         
-        # --- FIX: UNIFIED HIT RATE CALCULATION (DB & ALPACA FALLBACK) ---
+        # --- LIFETIME METRICS ---
         if not df_ex.empty:
-            hit_rate = len(df_ex[df_ex['Result'] == 'Win']) / len(df_ex) if len(df_ex) > 0 else 0.0
-            trade_count = len(df_ex)
+            hit_rate_all = len(df_ex[df_ex['Result'] == 'Win']) / len(df_ex) if len(df_ex) > 0 else 0.0
+            trades_all = len(df_ex)
         else:
-            # Fallback if there are absolutely 0 trades across all databases/brokers
-            hit_rate, trade_count = 0.0, 0
-        # -----------------------------------------------------------------
-        
-        scorecard_df = create_scorecard_df(metrics, hit_rate, trade_count)
+            hit_rate_all, trades_all = 0.0, 0
+
+        # --- TRAILING 30-DAY METRICS ---
+        cutoff_30d = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=30)
+        hist_30d = hist_df_adj[hist_df_adj['timestamp'] >= cutoff_30d].copy()
+        metrics_30d = calculate_advanced_metrics(hist_30d) if not hist_30d.empty else {}
+
+        if not df_ex.empty and 'Exit_Time' in df_ex.columns:
+            df_ex_30d = df_ex[pd.to_datetime(df_ex['Exit_Time'], utc=True) >= cutoff_30d]
+            hit_rate_30d = len(df_ex_30d[df_ex_30d['Result'] == 'Win']) / len(df_ex_30d) if len(df_ex_30d) > 0 else 0.0
+            trades_30d = len(df_ex_30d)
+        else:
+            hit_rate_30d, trades_30d = 0.0, 0
+
+        # Build Scorecard DataFrame
+        scorecard_df = create_scorecard_df(metrics, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d)
+
         inst_score = calculate_institutional_score(metrics)
         valid_cagr = metrics.get("CAGR", 0.0)
         
@@ -1561,7 +1617,20 @@ with tab3:
 
         with col_scorecard:
             st.markdown("### 📊 Metrics Breakdown (Adj. for Deposits)")
-            st.dataframe(scorecard_df, width="stretch", hide_index=True, column_config={"METRIC": st.column_config.TextColumn("Metric", width="medium"), "YOURS": st.column_config.TextColumn("Your Bot", width="small"), "BENCHMARK": st.column_config.TextColumn("Target", width="small"), "VERDICT": st.column_config.TextColumn("Verdict", width="small")}, height=280)
+            st.dataframe(
+                scorecard_df,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "METRIC": st.column_config.TextColumn("Metric", width="medium"),
+                    "LIFETIME": st.column_config.TextColumn("Your Bot (All)", width="small"),
+                    "VERDICT_ALL": st.column_config.TextColumn("Verdict", width="small"),
+                    "30D": st.column_config.TextColumn("Last 30 Days", width="small"),
+                    "TARGET": st.column_config.TextColumn("Target", width="small"),
+                    "VERDICT_30D": st.column_config.TextColumn("30D Verdict", width="small"),
+                },
+                height=320
+            )
 
         st.divider()
 
