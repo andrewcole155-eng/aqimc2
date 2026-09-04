@@ -771,8 +771,12 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
             return "🚀 Elite" if val > 1.0 else "😐 Std"
         elif metric_name == "Max Drawdown":
             return "🛡️ Safe" if abs(val) < 0.15 else "⚠️ High Risk"
-        elif metric_name == "Recovery Time":
-            return "⚡ Fast" if val < 30 else "🐢 Slow"
+        elif metric_name == "SQN":
+            return "🏆 Holy Grail" if val > 3.0 else ("🚀 Elite" if val > 2.0 else ("✅ Good" if val > 1.6 else "😐 Std"))
+        elif metric_name == "Information Ratio":
+            return "🚀 Elite" if val > 1.0 else ("✅ Target" if val >= 0.5 else "😐 Std")
+        elif metric_name == "Expectancy":
+            return "📈 Positive" if val > 0 else "🔻 Negative"
         elif metric_name == "Sharpe":
             return "🔥 Good" if val > 1.5 else ("✅ Target" if val >= 1.0 else "😐 Std")
         elif metric_name == "Sortino":
@@ -790,7 +794,9 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     cagr_all = metrics_all.get('CAGR', 0.0)
     mar_all = metrics_all.get('MAR Ratio', 0.0)
     mdd_all = metrics_all.get('Max Drawdown', 0.0)
-    rec_all = metrics_all.get('Recovery Time', 0)
+    sqn_all = metrics_all.get('SQN', 0.0)
+    ir_all = metrics_all.get('Information Ratio', 0.0)
+    exp_all = metrics_all.get('Expectancy', 0.0)
     shp_all = metrics_all.get('Sharpe Ratio', 0.0)
     srt_all = metrics_all.get('Sortino Ratio', 0.0)
     pf_all = metrics_all.get('Profit Factor', 0.0)
@@ -801,7 +807,9 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     cagr_30 = metrics_30d.get('CAGR', 0.0)
     mar_30 = metrics_30d.get('MAR Ratio', 0.0)
     mdd_30 = metrics_30d.get('Max Drawdown', 0.0)
-    rec_30 = metrics_30d.get('Recovery Time', 0)
+    sqn_30 = metrics_30d.get('SQN', 0.0)
+    ir_30 = metrics_30d.get('Information Ratio', 0.0)
+    exp_30 = metrics_30d.get('Expectancy', 0.0)
     shp_30 = metrics_30d.get('Sharpe Ratio', 0.0)
     srt_30 = metrics_30d.get('Sortino Ratio', 0.0)
     pf_30 = metrics_30d.get('Profit Factor', 0.0)
@@ -812,7 +820,9 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
         {"METRIC": "CAGR (Account)", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "30D": f"{cagr_30:.1%}", "TARGET": "> 20%", "VERDICT_30D": eval_verdict("CAGR", cagr_30)},
         {"METRIC": "MAR Ratio", "LIFETIME": f"{mar_all:.2f}", "VERDICT_ALL": eval_verdict("MAR", mar_all), "30D": f"{mar_30:.2f}", "TARGET": "> 1.0", "VERDICT_30D": eval_verdict("MAR", mar_30)},
         {"METRIC": "Max Drawdown", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Max Drawdown", mdd_all), "30D": f"{mdd_30:.1%}", "TARGET": "< 15%", "VERDICT_30D": eval_verdict("Max Drawdown", mdd_30)},
-        #{"METRIC": "Recovery Time", "LIFETIME": f"{rec_all} Days", "VERDICT_ALL": eval_verdict("Recovery Time", rec_all), "30D": f"{rec_30} Days", "TARGET": "< 30 Days", "VERDICT_30D": eval_verdict("Recovery Time", rec_30)},
+        {"METRIC": "System Quality (SQN)", "LIFETIME": f"{sqn_all:.2f}", "VERDICT_ALL": eval_verdict("SQN", sqn_all), "30D": f"{sqn_30:.2f}", "TARGET": "> 1.6", "VERDICT_30D": eval_verdict("SQN", sqn_30)},
+        {"METRIC": "Information Ratio", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "30D": f"{ir_30:.2f}", "TARGET": "> 0.5", "VERDICT_30D": eval_verdict("Information Ratio", ir_30)},
+        {"METRIC": "Expectancy (Edge)", "LIFETIME": f"{exp_all:.2%}", "VERDICT_ALL": eval_verdict("Expectancy", exp_all), "30D": f"{exp_30:.2%}", "TARGET": "> 0%", "VERDICT_30D": eval_verdict("Expectancy", exp_30)},
         {"METRIC": "Sharpe Ratio", "LIFETIME": f"{shp_all:.2f}", "VERDICT_ALL": eval_verdict("Sharpe", shp_all), "30D": f"{shp_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Sharpe", shp_30)},
         {"METRIC": "Sortino Ratio", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "30D": f"{srt_30:.2f}", "TARGET": "> 2.0", "VERDICT_30D": eval_verdict("Sortino", srt_30)},
         {"METRIC": "Profit Factor", "LIFETIME": f"{pf_all:.2f}", "VERDICT_ALL": eval_verdict("Profit Factor", pf_all), "30D": f"{pf_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Profit Factor", pf_30)},
@@ -1652,7 +1662,7 @@ with tab3:
                     "TARGET": st.column_config.TextColumn("Target", width="small"),
                     "VERDICT_30D": st.column_config.TextColumn("30D Verdict", width="small"),
                 },
-                height=400
+                height=420
             )
 
         st.divider()
