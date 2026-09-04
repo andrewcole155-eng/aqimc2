@@ -1662,7 +1662,7 @@ with tab3:
                     "TARGET": st.column_config.TextColumn("Target", width="small"),
                     "VERDICT_30D": st.column_config.TextColumn("30D Verdict", width="small"),
                 },
-                height=440
+                height=460
             )
 
         st.divider()
