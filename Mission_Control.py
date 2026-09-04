@@ -763,29 +763,29 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     Constructs a dual-horizon performance scorecard comparing Lifetime vs. Trailing 30-Day performance against institutional targets.
     """
     def eval_verdict(metric_name, val):
-        if metric_name == "Total Return":
+        if "Total Cumulative Return" in metric_name:
             return "🏆 Elite" if val >= 0.50 else ("📈 Profitable" if val > 0 else "🔻 Loss")
-        elif metric_name == "CAGR":
+        elif "CAGR" in metric_name:
             return "🏆 Elite" if val > 0.20 else ("✅ Target" if val >= 0.10 else "😐 Std")
-        elif metric_name == "MAR":
+        elif "MAR" in metric_name:
             return "🚀 Elite" if val > 1.0 else "😐 Std"
-        elif metric_name == "Max Drawdown":
+        elif "Max Drawdown" in metric_name:
             return "🛡️ Safe" if abs(val) < 0.15 else "⚠️ High Risk"
-        elif metric_name == "SQN":
+        elif "SQN" in metric_name:
             return "🏆 Holy Grail" if val > 3.0 else ("🚀 Elite" if val > 2.0 else ("✅ Good" if val > 1.6 else "😐 Std"))
-        elif metric_name == "Information Ratio":
+        elif "Information Ratio" in metric_name:
             return "🚀 Elite" if val > 1.0 else ("✅ Target" if val >= 0.5 else "😐 Std")
-        elif metric_name == "Expectancy":
+        elif "Expectancy" in metric_name:
             return "📈 Positive" if val > 0 else "🔻 Negative"
-        elif metric_name == "Sharpe":
+        elif "Sharpe" in metric_name:
             return "🔥 Good" if val > 1.5 else ("✅ Target" if val >= 1.0 else "😐 Std")
-        elif metric_name == "Sortino":
+        elif "Sortino" in metric_name:
             return "💎 Strong" if val > 2.0 else "😐 Std"
-        elif metric_name == "Profit Factor":
+        elif "Profit Factor" in metric_name:
             return "💰 Rich" if val > 1.5 else "😐 Std"
-        elif metric_name == "Daily Reliability":
+        elif "Daily Reliability" in metric_name:
             return "✅ Stable" if val > 0.50 else "🔻 Low"
-        elif metric_name == "Trade Hit Rate":
+        elif "Trade Hit Rate" in metric_name:
             return "🎯 Sniper" if val >= 0.45 else "😐 Std"
         return "—"
 
@@ -816,18 +816,18 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     wr_30 = metrics_30d.get('Win Rate (Daily)', 0.0)
 
     data = [
-        {"METRIC": "Total Cumulative Return", "LIFETIME": f"{tot_all:.1%}", "VERDICT_ALL": eval_verdict("Total Return", tot_all), "30D": f"{tot_30:.1%}", "TARGET": "> 0%", "VERDICT_30D": eval_verdict("Total Return", tot_30)},
-        {"METRIC": "CAGR (Account)", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "30D": f"{cagr_30:.1%}", "TARGET": "> 20%", "VERDICT_30D": eval_verdict("CAGR", cagr_30)},
-        {"METRIC": "MAR Ratio", "LIFETIME": f"{mar_all:.2f}", "VERDICT_ALL": eval_verdict("MAR", mar_all), "30D": f"{mar_30:.2f}", "TARGET": "> 1.0", "VERDICT_30D": eval_verdict("MAR", mar_30)},
-        {"METRIC": "Max Drawdown", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Max Drawdown", mdd_all), "30D": f"{mdd_30:.1%}", "TARGET": "< 15%", "VERDICT_30D": eval_verdict("Max Drawdown", mdd_30)},
-        {"METRIC": "System Quality (SQN)", "LIFETIME": f"{sqn_all:.2f}", "VERDICT_ALL": eval_verdict("SQN", sqn_all), "30D": f"{sqn_30:.2f}", "TARGET": "> 1.6", "VERDICT_30D": eval_verdict("SQN", sqn_30)},
-        {"METRIC": "Information Ratio", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "30D": f"{ir_30:.2f}", "TARGET": "> 0.5", "VERDICT_30D": eval_verdict("Information Ratio", ir_30)},
-        {"METRIC": "Expectancy (Edge)", "LIFETIME": f"{exp_all:.2%}", "VERDICT_ALL": eval_verdict("Expectancy", exp_all), "30D": f"{exp_30:.2%}", "TARGET": "> 0%", "VERDICT_30D": eval_verdict("Expectancy", exp_30)},
-        {"METRIC": "Sharpe Ratio", "LIFETIME": f"{shp_all:.2f}", "VERDICT_ALL": eval_verdict("Sharpe", shp_all), "30D": f"{shp_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Sharpe", shp_30)},
-        {"METRIC": "Sortino Ratio", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "30D": f"{srt_30:.2f}", "TARGET": "> 2.0", "VERDICT_30D": eval_verdict("Sortino", srt_30)},
-        {"METRIC": "Profit Factor", "LIFETIME": f"{pf_all:.2f}", "VERDICT_ALL": eval_verdict("Profit Factor", pf_all), "30D": f"{pf_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Profit Factor", pf_30)},
-        {"METRIC": "Daily Reliability", "LIFETIME": f"{wr_all:.0%}", "VERDICT_ALL": eval_verdict("Daily Reliability", wr_all), "30D": f"{wr_30:.0%}", "TARGET": "50-55%", "VERDICT_30D": eval_verdict("Daily Reliability", wr_30)},
-        {"METRIC": "Trade Hit Rate", "LIFETIME": f"{hit_rate_all:.0%} ({trades_all})", "VERDICT_ALL": eval_verdict("Trade Hit Rate", hit_rate_all), "30D": f"{hit_rate_30d:.0%} ({trades_30d})", "TARGET": "40-50%", "VERDICT_30D": eval_verdict("Trade Hit Rate", hit_rate_30d)},
+        {"METRIC": "Total Cumulative Return — Absolute historical growth", "LIFETIME": f"{tot_all:.1%}", "VERDICT_ALL": eval_verdict("Total Cumulative Return", tot_all), "30D": f"{tot_30:.1%}", "TARGET": "> 0%", "VERDICT_30D": eval_verdict("Total Cumulative Return", tot_30)},
+        {"METRIC": "CAGR (Account) — Annualized compounding rate", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "30D": f"{cagr_30:.1%}", "TARGET": "> 20%", "VERDICT_30D": eval_verdict("CAGR", cagr_30)},
+        {"METRIC": "MAR Ratio — CAGR divided by Max Drawdown", "LIFETIME": f"{mar_all:.2f}", "VERDICT_ALL": eval_verdict("MAR", mar_all), "30D": f"{mar_30:.2f}", "TARGET": "> 1.0", "VERDICT_30D": eval_verdict("MAR", mar_30)},
+        {"METRIC": "Max Drawdown — Deepest peak-to-trough drop", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Max Drawdown", mdd_all), "30D": f"{mdd_30:.1%}", "TARGET": "< 15%", "VERDICT_30D": eval_verdict("Max Drawdown", mdd_30)},
+        {"METRIC": "System Quality (SQN) — Trade edge vs. variance", "LIFETIME": f"{sqn_all:.2f}", "VERDICT_ALL": eval_verdict("SQN", sqn_all), "30D": f"{sqn_30:.2f}", "TARGET": "> 1.6", "VERDICT_30D": eval_verdict("SQN", sqn_30)},
+        {"METRIC": "Information Ratio — Alpha generated vs. SPY benchmark", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "30D": f"{ir_30:.2f}", "TARGET": "> 0.5", "VERDICT_30D": eval_verdict("Information Ratio", ir_30)},
+        {"METRIC": "Expectancy (Edge) — Expected % net gain per trade", "LIFETIME": f"{exp_all:.2%}", "VERDICT_ALL": eval_verdict("Expectancy", exp_all), "30D": f"{exp_30:.2%}", "TARGET": "> 0%", "VERDICT_30D": eval_verdict("Expectancy", exp_30)},
+        {"METRIC": "Sharpe Ratio — Return per unit of total risk", "LIFETIME": f"{shp_all:.2f}", "VERDICT_ALL": eval_verdict("Sharpe", shp_all), "30D": f"{shp_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Sharpe", shp_30)},
+        {"METRIC": "Sortino Ratio — Return per unit of downside risk", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "30D": f"{srt_30:.2f}", "TARGET": "> 2.0", "VERDICT_30D": eval_verdict("Sortino", srt_30)},
+        {"METRIC": "Profit Factor — Gross profit divided by gross loss", "LIFETIME": f"{pf_all:.2f}", "VERDICT_ALL": eval_verdict("Profit Factor", pf_all), "30D": f"{pf_30:.2f}", "TARGET": "> 1.5", "VERDICT_30D": eval_verdict("Profit Factor", pf_30)},
+        {"METRIC": "Daily Reliability — % of days ending in profit", "LIFETIME": f"{wr_all:.0%}", "VERDICT_ALL": eval_verdict("Daily Reliability", wr_all), "30D": f"{wr_30:.0%}", "TARGET": "50-55%", "VERDICT_30D": eval_verdict("Daily Reliability", wr_30)},
+        {"METRIC": "Trade Hit Rate — % of closed trades that win", "LIFETIME": f"{hit_rate_all:.0%} ({trades_all})", "VERDICT_ALL": eval_verdict("Trade Hit Rate", hit_rate_all), "30D": f"{hit_rate_30d:.0%} ({trades_30d})", "TARGET": "40-50%", "VERDICT_30D": eval_verdict("Trade Hit Rate", hit_rate_30d)},
     ]
     return pd.DataFrame(data)
 
