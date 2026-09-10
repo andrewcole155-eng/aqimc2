@@ -724,10 +724,10 @@ def calculate_advanced_metrics(hist_df):
             information_ratio = (active_return.mean() * 252) / (tracking_error * (252 ** 0.5))
         else: information_ratio = 0.0
         
-        # --- NEW: Market Beta Calculation ---
-        cov_mat = np.cov(returns, df['benchmark_return'])
-        if cov_mat.shape == (2,2) and cov_mat[1,1] > 1e-9:
-            beta_val = cov_mat[0,1] / cov_mat[1,1]
+        # --- FIXED: Market Beta Calculation (Pandas Native Alignment) ---
+        bench_var = df['benchmark_return'].var()
+        if bench_var > 1e-9:
+            beta_val = returns.cov(df['benchmark_return']) / bench_var
         else:
             beta_val = 0.0
     else:
