@@ -329,7 +329,7 @@ def apply_twr_adjustments(hist_df):
         return hist_df
 
     # 1. Fetch exact cash-flow ledger from the Trading Agent state
-    trading_state, _ = get_cloud_telemetry()
+    trading_state, _, _ = get_cloud_telemetry()
     cash_flows = trading_state.get('cash_flows', {})
     
     # Ensure UTC timezone alignment
