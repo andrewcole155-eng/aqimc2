@@ -1716,7 +1716,7 @@ with tab3:
                     "VERDICT_30D": st.column_config.TextColumn("30D Assessment", width="small"),
                     "PRIORITY": st.column_config.TextColumn("Priority", width="small"),
                 },
-                height=700
+                height=720
             )
 
         st.divider()
