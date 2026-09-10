@@ -162,28 +162,29 @@ def get_cloud_telemetry():
         gc = gspread.service_account_from_dict(credentials)
         sh = gc.open("Angel_Bot_Logs")
         
-        # 1. Get Trading Agent State (Positions/Locks)
+        # 1. Get Trading Agent State
         try:
-            trading_ws = sh.worksheet("Trading_State")
-            trading_str = trading_ws.acell('A1').value
+            trading_str = sh.worksheet("Trading_State").acell('A1').value
             trading_state = json.loads(trading_str) if trading_str else {}
-        except gspread.exceptions.WorksheetNotFound:
-            trading_state = {}
+        except Exception: trading_state = {}
 
-        # 2. Get Daily Inference Agent State (Tensors, Health, Signals)
+        # 2. Get Daily Inference State
         try:
-            inference_ws = sh.worksheet("Inference_State")
-            inference_chunks = inference_ws.col_values(1)
-            inference_str = "".join(inference_chunks)
+            inference_str = "".join(sh.worksheet("Inference_State").col_values(1))
             inference_state = json.loads(inference_str) if inference_str else {}
-        except gspread.exceptions.WorksheetNotFound:
-            inference_state = {}
+        except Exception: inference_state = {}
+            
+        # 3. Get Offline Institutional Metrics (DSR/PBO)
+        try:
+            offline_str = sh.worksheet("Offline_Metrics").acell('A1').value
+            offline_state = json.loads(offline_str) if offline_str else {}
+        except Exception: offline_state = {}
 
-        return trading_state, inference_state
+        return trading_state, inference_state, offline_state
         
     except Exception as e:
         st.warning(f"Telemetry Sync Warning: {e}")
-        return {}, {}
+        return {}, {}, {}
 
 @st.cache_data(ttl=60)
 def get_account_data(_api):
@@ -780,12 +781,21 @@ def calculate_advanced_metrics(hist_df):
         "Exposure Efficiency": exposure_efficiency
     }
 
-def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d):
+def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d, offline_state=None):
     """
     Constructs a dual-horizon performance scorecard comparing Lifetime vs. Trailing 30-Day performance against institutional targets.
     """
+    if offline_state is None:
+        offline_state = {}
+
     def eval_verdict(metric_name, val):
-        if "Total Cumulative Return" in metric_name:
+        if val is None:
+            return "TBD"
+        if "Deflated Sharpe" in metric_name:
+            return "🏆 Elite" if val >= 0.95 else ("✅ Target" if val >= 0.90 else "⚠️ Weak")
+        elif "Backtest Overfitting" in metric_name:
+            return "🛡️ Safe" if val <= 0.10 else ("⚠️ Monitor" if val <= 0.20 else "🚨 Overfit")
+        elif "Total Cumulative Return" in metric_name:
             return "🏆 Elite" if val >= 0.50 else ("📈 Profitable" if val > 0 else "🔻 Loss")
         elif "CAGR" in metric_name:
             return "🏆 Elite" if val > 0.20 else ("✅ Target" if val >= 0.10 else "😐 Std")
@@ -818,6 +828,19 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
         elif "Track Record" in metric_name:
             return "🏛️ Credible" if val >= 24 else "🌱 Maturing"
         return "—"
+
+    # --- Offline Institutional Metrics Extraction ---
+    dsr_vals, pbo_vals = [], []
+    tickers_data = offline_state.get("tickers", {})
+    for t_data in tickers_data.values():
+        if "DSR" in t_data: dsr_vals.append(t_data["DSR"])
+        if "PBO" in t_data: pbo_vals.append(t_data["PBO"])
+
+    avg_dsr = sum(dsr_vals) / len(dsr_vals) if dsr_vals else None
+    avg_pbo = sum(pbo_vals) / len(pbo_vals) if pbo_vals else None
+
+    dsr_display = f"{avg_dsr:.2f}" if avg_dsr is not None else "Pending Offline Calc"
+    pbo_display = f"{avg_pbo:.2f}" if avg_pbo is not None else "Pending Offline Calc"
 
     # Extract calculated metrics (Fallback to 0.0)
     tot_all = metrics_all.get('Total Return', 0.0)
@@ -854,8 +877,8 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
 
     data = [
         # === INSTITUTIONAL ALLOCATOR METRICS ===
-        {"METRIC": "Deflated Sharpe Ratio (DSR)", "TARGET": "> 0.95 (Statistically significant at 5% level).", "LIFETIME": "Pending Offline Calc", "VERDICT_ALL": "TBD", "30D": "Pending", "VERDICT_30D": "TBD", "PRIORITY": "Serious Concern"},
-        {"METRIC": "Prob. of Backtest Overfitting (PBO)", "TARGET": "< 0.10. Utilizing Combinatorial Purged Cross-Validation.", "LIFETIME": "Pending Offline Calc", "VERDICT_ALL": "TBD", "30D": "Pending", "VERDICT_30D": "TBD", "PRIORITY": "Serious Concern"},
+        {"METRIC": "Deflated Sharpe Ratio (DSR)", "TARGET": "> 0.95 (Statistically significant at 5% level).", "LIFETIME": dsr_display, "VERDICT_ALL": eval_verdict("Deflated Sharpe Ratio", avg_dsr), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
+        {"METRIC": "Prob. of Backtest Overfitting (PBO)", "TARGET": "< 0.10. Utilizing Combinatorial Purged Cross-Validation.", "LIFETIME": pbo_display, "VERDICT_ALL": eval_verdict("Backtest Overfitting", avg_pbo), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
         {"METRIC": "Market Beta (β) to S&P 500", "TARGET": "-0.10 < β < 0.10. Pure, uncorrelated alpha.", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "30D": f"{beta_30:.2f}", "VERDICT_30D": eval_verdict("Market Beta", beta_30), "PRIORITY": "High"},
         {"METRIC": "Minimum Track Record Length", "TARGET": "> 24 to 36 months of live trading required.", "LIFETIME": f"{trl_all:.1f} months", "VERDICT_ALL": eval_verdict("Track Record", trl_all), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Medium"},
         {"METRIC": "Capacity (Maximum AUM)", "TARGET": "> $100M for institutional allocators.", "LIFETIME": "Est. >$250M", "VERDICT_ALL": "✅ High Liq.", "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "High"},
@@ -881,8 +904,7 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     
     df = pd.DataFrame(data)
 
-    # --- NEW: Custom Multi-Level Sorting Logic ---
-    # 1. Map string priorities to an explicit numerical hierarchy
+    # Custom Multi-Level Sorting Logic
     priority_mapping = {
         "Serious Concern": 0,
         "High": 1,
@@ -890,11 +912,8 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
         "Low": 3
     }
     df['Priority_Rank'] = df['PRIORITY'].map(priority_mapping)
-
-    # 2. Sort by Priority (ascending rank) -> then alphabetically by Metric name
     df = df.sort_values(by=['Priority_Rank', 'METRIC'], ascending=[True, True])
 
-    # 3. Enforce final column display order and drop the temporary rank mapping
     ordered_columns = ['METRIC', 'TARGET', 'LIFETIME', 'VERDICT_ALL', '30D', 'VERDICT_30D', 'PRIORITY']
     return df[ordered_columns].reset_index(drop=True)
 
@@ -1222,7 +1241,7 @@ if account:
     spy_return = get_market_benchmark()
     daily_alpha = daily_pl_pct - spy_return
 
-    trading_state, inference_state = get_cloud_telemetry() 
+    trading_state, inference_state, offline_state = get_cloud_telemetry() 
     json_signals = inference_state.get("tickers", inference_state.get("signals", {}))
 
     total_var = 0.0
@@ -1681,7 +1700,7 @@ with tab3:
             hit_rate_30d, trades_30d = 0.0, 0
 
         # Build Scorecard DataFrame
-        scorecard_df = create_scorecard_df(metrics, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d)
+        scorecard_df = create_scorecard_df(metrics, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d, offline_state)
 
         inst_score = calculate_institutional_score(metrics)
         valid_cagr = metrics.get("CAGR", 0.0)
