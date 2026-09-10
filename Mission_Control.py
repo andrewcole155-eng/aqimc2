@@ -852,7 +852,6 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     years_active = trl_all / 12.0 if trl_all > 0 else 1.0
     turnover_all = trades_all / years_active
 
-    # Data is constructed strictly in the 1-through-7 order
     data = [
         # === INSTITUTIONAL ALLOCATOR METRICS ===
         {"METRIC": "Deflated Sharpe Ratio (DSR)", "TARGET": "> 0.95 (Statistically significant at 5% level).", "LIFETIME": "Pending Offline Calc", "VERDICT_ALL": "TBD", "30D": "Pending", "VERDICT_30D": "TBD", "PRIORITY": "Serious Concern"},
@@ -880,9 +879,24 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
         {"METRIC": "Information Ratio (vs SPY)", "TARGET": "> 0.5. Alpha generated vs benchmark.", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "30D": f"{ir_30:.2f}", "VERDICT_30D": eval_verdict("Information Ratio", ir_30), "PRIORITY": "High"},
     ]
     
-    # Enforce exact column ordering before returning
     df = pd.DataFrame(data)
-    return df[['METRIC', 'TARGET', 'LIFETIME', 'VERDICT_ALL', '30D', 'VERDICT_30D', 'PRIORITY']]
+
+    # --- NEW: Custom Multi-Level Sorting Logic ---
+    # 1. Map string priorities to an explicit numerical hierarchy
+    priority_mapping = {
+        "Serious Concern": 0,
+        "High": 1,
+        "Medium": 2,
+        "Low": 3
+    }
+    df['Priority_Rank'] = df['PRIORITY'].map(priority_mapping)
+
+    # 2. Sort by Priority (ascending rank) -> then alphabetically by Metric name
+    df = df.sort_values(by=['Priority_Rank', 'METRIC'], ascending=[True, True])
+
+    # 3. Enforce final column display order and drop the temporary rank mapping
+    ordered_columns = ['METRIC', 'TARGET', 'LIFETIME', 'VERDICT_ALL', '30D', 'VERDICT_30D', 'PRIORITY']
+    return df[ordered_columns].reset_index(drop=True)
 
 def calculate_institutional_score(metrics):
     score = 0
