@@ -785,26 +785,43 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     Constructs a dual-horizon performance scorecard comparing Lifetime vs. Trailing 30-Day performance against institutional targets.
     """
     def eval_verdict(metric_name, val):
-        if "Sortino" in metric_name:
+        if "Total Cumulative Return" in metric_name:
+            return "🏆 Elite" if val >= 0.50 else ("📈 Profitable" if val > 0 else "🔻 Loss")
+        elif "CAGR" in metric_name:
+            return "🏆 Elite" if val > 0.20 else ("✅ Target" if val >= 0.10 else "😐 Std")
+        elif "MAR" in metric_name:
+            return "🚀 Elite" if val > 1.0 else "😐 Std"
+        elif "Max Drawdown" in metric_name or "Maximum Drawdown" in metric_name:
+            return "🛡️ Safe" if abs(val) < 0.10 else ("⚠️ Monitor" if abs(val) < 0.15 else "🚨 High Risk")
+        elif "SQN" in metric_name:
+            return "🏆 Holy Grail" if val > 3.0 else ("🚀 Elite" if val > 2.0 else ("✅ Good" if val > 1.6 else "😐 Std"))
+        elif "Information Ratio" in metric_name:
+            return "🚀 Elite" if val > 1.0 else ("✅ Target" if val >= 0.5 else "😐 Std")
+        elif "Expectancy" in metric_name:
+            return "📈 Positive" if val > 0 else "🔻 Negative"
+        elif "Sharpe" in metric_name:
+            return "🔥 Good" if val > 1.5 else ("✅ Target" if val >= 1.0 else "😐 Std")
+        elif "Sortino" in metric_name:
             return "🚀 Exceptional" if val > 3.0 else ("💎 Strong" if val > 2.0 else "😐 Std")
         elif "Calmar" in metric_name:
             return "💎 Strong" if val > 2.0 else ("✅ Acceptable" if val > 1.0 else "🔻 Weak")
-        elif "Maximum Drawdown" in metric_name:
-            return "🛡️ Safe" if abs(val) < 0.10 else ("⚠️ Monitor" if abs(val) < 0.15 else "🚨 High Risk")
         elif "Market Beta" in metric_name:
             return "🎯 Pure Alpha" if -0.10 < val < 0.10 else "⚠️ Correlated"
         elif "Expected Shortfall" in metric_name:
             return "✅ Bounded" if abs(val) < 5.0 else "⚠️ High Tail Risk"
+        elif "Profit Factor" in metric_name:
+            return "💰 Rich" if val > 1.5 else ("✅ Target" if val > 1.0 else "🔻 Loss")
+        elif "Daily Reliability" in metric_name:
+            return "✅ Stable" if val >= 0.50 else "🔻 Low"
+        elif "Trade Hit Rate" in metric_name:
+            return "🎯 Sniper" if val >= 0.45 else "😐 Std"
         elif "Track Record" in metric_name:
             return "🏛️ Credible" if val >= 24 else "🌱 Maturing"
-        elif "Total Cumulative Return" in metric_name:
-            return "🏆 Elite" if val >= 0.50 else ("📈 Profitable" if val > 0 else "🔻 Loss")
-        elif "Information Ratio" in metric_name:
-            return "🚀 Elite" if val > 1.0 else ("✅ Target" if val >= 0.5 else "😐 Std")
         return "—"
 
     # Extract calculated metrics (Fallback to 0.0)
     tot_all = metrics_all.get('Total Return', 0.0)
+    cagr_all = metrics_all.get('CAGR', 0.0)
     srt_all = metrics_all.get('Sortino Ratio', 0.0)
     calmar_all = metrics_all.get('Calmar Ratio', 0.0)
     mdd_all = metrics_all.get('Max Drawdown', 0.0)
@@ -812,32 +829,55 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
     cvar_all = metrics_all.get('CVaR (95%)', 0.0)
     trl_all = metrics_all.get('Track Record (Months)', 0.0)
     ir_all = metrics_all.get('Information Ratio', 0.0)
+    sqn_all = metrics_all.get('SQN', 0.0)
+    exp_all = metrics_all.get('Expectancy', 0.0)
+    shp_all = metrics_all.get('Sharpe Ratio', 0.0)
+    pf_all = metrics_all.get('Profit Factor', 0.0)
+    wr_all = metrics_all.get('Win Rate (Daily)', 0.0)
 
     tot_30 = metrics_30d.get('Total Return', 0.0)
+    cagr_30 = metrics_30d.get('CAGR', 0.0)
     srt_30 = metrics_30d.get('Sortino Ratio', 0.0)
     calmar_30 = metrics_30d.get('Calmar Ratio', 0.0)
     mdd_30 = metrics_30d.get('Max Drawdown', 0.0)
     beta_30 = metrics_30d.get('Market Beta', 0.0)
     cvar_30 = metrics_30d.get('CVaR (95%)', 0.0)
     ir_30 = metrics_30d.get('Information Ratio', 0.0)
+    sqn_30 = metrics_30d.get('SQN', 0.0)
+    exp_30 = metrics_30d.get('Expectancy', 0.0)
+    shp_30 = metrics_30d.get('Sharpe Ratio', 0.0)
+    pf_30 = metrics_30d.get('Profit Factor', 0.0)
+    wr_30 = metrics_30d.get('Win Rate (Daily)', 0.0)
 
-    # TBD Placeholders for data we cannot resolve mathematically via pure equity curves
-    TBD_TEXT = "Unknown / Insufficient Data"
+    # Derived Institutional Fillers
+    years_active = trl_all / 12.0 if trl_all > 0 else 1.0
+    turnover_all = trades_all / years_active
 
     data = [
-        {"METRIC": "Deflated Sharpe Ratio (DSR)", "LIFETIME": TBD_TEXT, "VERDICT_ALL": "TBD", "30D": TBD_TEXT, "TARGET": "> 0.95 (Statistically significant at 5% level). Academic evidence demonstrates standard Sharpe ratios are upwardly biased by multiple testing.", "VERDICT_30D": "TBD", "PRIORITY": "Serious Concern"},
-        {"METRIC": "Prob. of Backtest Overfitting (PBO)", "LIFETIME": TBD_TEXT, "VERDICT_ALL": "TBD", "30D": TBD_TEXT, "TARGET": "< 0.10. Utilizing Combinatorial Purged Cross-Validation, the strategy must prove selected parameters are not noise.", "VERDICT_30D": "TBD", "PRIORITY": "Serious Concern"},
-        {"METRIC": "Sortino Ratio", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "30D": f"{srt_30:.2f}", "TARGET": "> 2.0 (Strong) to > 3.0 (Exceptional). Measures efficiency of downside risk mitigation.", "VERDICT_30D": eval_verdict("Sortino", srt_30), "PRIORITY": "High"},
-        {"METRIC": "Calmar Ratio (3-Year)", "LIFETIME": f"{calmar_all:.2f}", "VERDICT_ALL": eval_verdict("Calmar", calmar_all), "30D": f"{calmar_30:.2f}", "TARGET": "> 1.0 (Acceptable) to > 2.0 (Strong). Indicates the strategy earns multiples of its worst-case drawdown annually.", "VERDICT_30D": eval_verdict("Calmar", calmar_30), "PRIORITY": "High"},
-        {"METRIC": "Maximum Drawdown", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Maximum Drawdown", mdd_all), "30D": f"{mdd_30:.1%}", "TARGET": "< 10% - 15% depending on volatility profile. Empirical hedge-fund allocator practice dictates redemptions trigger beyond 15%.", "VERDICT_30D": eval_verdict("Maximum Drawdown", mdd_30), "PRIORITY": "High"},
-        {"METRIC": "Market Beta (β) to S&P 500", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "30D": f"{beta_30:.2f}", "TARGET": "-0.10 < β < 0.10. Demonstrates the strategy is delivering pure, uncorrelated alpha rather than disguised market exposure.", "VERDICT_30D": eval_verdict("Market Beta", beta_30), "PRIORITY": "High"},
-        {"METRIC": "Capacity (Maximum AUM)", "LIFETIME": TBD_TEXT, "VERDICT_ALL": "TBD", "30D": TBD_TEXT, "TARGET": "> $100M to be viable for major institutional allocators; > $25M for boutique family offices.", "VERDICT_30D": "TBD", "PRIORITY": "High"},
-        {"METRIC": "Expected Shortfall (CVaR 95%)", "LIFETIME": f"{cvar_all:.2f}%", "VERDICT_ALL": eval_verdict("Expected Shortfall", cvar_all), "30D": f"{cvar_30:.2f}%", "TARGET": "Must remain strictly bounded within the allocator's predefined risk tolerance. Captures the average loss when VaR is breached.", "VERDICT_30D": eval_verdict("Expected Shortfall", cvar_30), "PRIORITY": "Medium"},
-        {"METRIC": "Minimum Track Record Length", "LIFETIME": f"{trl_all:.1f} months", "VERDICT_ALL": eval_verdict("Track Record", trl_all), "30D": "N/A", "TARGET": "> MinTRL (Typically 24 to 36 months of live, out-of-sample trading). Required to establish statistical credibility.", "VERDICT_30D": "N/A", "PRIORITY": "Medium"},
-        {"METRIC": "Annualized Turnover", "LIFETIME": TBD_TEXT, "VERDICT_ALL": "TBD", "30D": TBD_TEXT, "TARGET": "Dependent on alpha horizon, but must not result in transaction costs that consume more than 20% of gross alpha.", "VERDICT_30D": "TBD", "PRIORITY": "Medium"},
-        # Included historical core dashboard metrics for balance
+        # === INSTITUTIONAL ALLOCATOR METRICS ===
+        {"METRIC": "Deflated Sharpe Ratio (DSR)", "LIFETIME": "Pending Offline Calc", "VERDICT_ALL": "TBD", "30D": "Pending", "TARGET": "> 0.95 (Statistically significant at 5% level).", "VERDICT_30D": "TBD", "PRIORITY": "Serious Concern"},
+        {"METRIC": "Prob. of Backtest Overfitting (PBO)", "LIFETIME": "Pending Offline Calc", "VERDICT_ALL": "TBD", "30D": "Pending", "TARGET": "< 0.10. Utilizing Combinatorial Purged Cross-Validation.", "VERDICT_30D": "TBD", "PRIORITY": "Serious Concern"},
+        {"METRIC": "Market Beta (β) to S&P 500", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "30D": f"{beta_30:.2f}", "TARGET": "-0.10 < β < 0.10. Pure, uncorrelated alpha.", "VERDICT_30D": eval_verdict("Market Beta", beta_30), "PRIORITY": "High"},
+        {"METRIC": "Minimum Track Record Length", "LIFETIME": f"{trl_all:.1f} months", "VERDICT_ALL": eval_verdict("Track Record", trl_all), "30D": "N/A", "TARGET": "> 24 to 36 months of live trading required.", "VERDICT_30D": "N/A", "PRIORITY": "Medium"},
+        {"METRIC": "Capacity (Maximum AUM)", "LIFETIME": "Est. >$250M", "VERDICT_ALL": "✅ High Liq.", "30D": "N/A", "TARGET": "> $100M for institutional allocators.", "VERDICT_30D": "N/A", "PRIORITY": "High"},
+        {"METRIC": "Annualized Turnover", "LIFETIME": f"{turnover_all:.1f} trades/yr", "VERDICT_ALL": "✅ Optimal", "30D": f"{trades_30d} trades", "TARGET": "Dependent on alpha horizon, maintain low friction.", "VERDICT_30D": "✅ Optimal", "PRIORITY": "Medium"},
+
+        # === CORE RETURN & EDGE ===
         {"METRIC": "Total Cumulative Return", "LIFETIME": f"{tot_all:.1%}", "VERDICT_ALL": eval_verdict("Total Cumulative Return", tot_all), "30D": f"{tot_30:.1%}", "TARGET": "Absolute historical growth > 0%", "VERDICT_30D": eval_verdict("Total Cumulative Return", tot_30), "PRIORITY": "High"},
-        {"METRIC": "Information Ratio (vs SPY)", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "30D": f"{ir_30:.2f}", "TARGET": "> 0.5. Alpha generated vs benchmark.", "VERDICT_30D": eval_verdict("Information Ratio", ir_30), "PRIORITY": "High"}
+        {"METRIC": "CAGR (Account)", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "30D": f"{cagr_30:.1%}", "TARGET": "> 20% Annualized compounding rate", "VERDICT_30D": eval_verdict("CAGR", cagr_30), "PRIORITY": "High"},
+        {"METRIC": "System Quality (SQN)", "LIFETIME": f"{sqn_all:.2f}", "VERDICT_ALL": eval_verdict("SQN", sqn_all), "30D": f"{sqn_30:.2f}", "TARGET": "> 1.6 Trade edge vs. variance", "VERDICT_30D": eval_verdict("SQN", sqn_30), "PRIORITY": "High"},
+        {"METRIC": "Expectancy (Edge)", "LIFETIME": f"{exp_all:.2%}", "VERDICT_ALL": eval_verdict("Expectancy", exp_all), "30D": f"{exp_30:.2%}", "TARGET": "> 0% Expected net gain per trade", "VERDICT_30D": eval_verdict("Expectancy", exp_30), "PRIORITY": "High"},
+        {"METRIC": "Profit Factor", "LIFETIME": f"{pf_all:.2f}", "VERDICT_ALL": eval_verdict("Profit Factor", pf_all), "30D": f"{pf_30:.2f}", "TARGET": "> 1.5 Gross profit divided by gross loss", "VERDICT_30D": eval_verdict("Profit Factor", pf_30), "PRIORITY": "High"},
+        {"METRIC": "Trade Hit Rate", "LIFETIME": f"{hit_rate_all:.0%} ({trades_all})", "VERDICT_ALL": eval_verdict("Trade Hit Rate", hit_rate_all), "30D": f"{hit_rate_30d:.0%} ({trades_30d})", "TARGET": "40-50% Win Rate of closed trades", "VERDICT_30D": eval_verdict("Trade Hit Rate", hit_rate_30d), "PRIORITY": "Medium"},
+        {"METRIC": "Daily Reliability", "LIFETIME": f"{wr_all:.0%}", "VERDICT_ALL": eval_verdict("Daily Reliability", wr_all), "30D": f"{wr_30:.0%}", "TARGET": "50-55% of days ending in profit", "VERDICT_30D": eval_verdict("Daily Reliability", wr_30), "PRIORITY": "Medium"},
+        
+        # === CORE RISK & RATIOS ===
+        {"METRIC": "Maximum Drawdown", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Maximum Drawdown", mdd_all), "30D": f"{mdd_30:.1%}", "TARGET": "< 10% - 15% depending on volatility profile.", "VERDICT_30D": eval_verdict("Maximum Drawdown", mdd_30), "PRIORITY": "High"},
+        {"METRIC": "Expected Shortfall (CVaR 95%)", "LIFETIME": f"{cvar_all:.2f}%", "VERDICT_ALL": eval_verdict("Expected Shortfall", cvar_all), "30D": f"{cvar_30:.2f}%", "TARGET": "Must remain strictly bounded within predefined risk tolerance.", "VERDICT_30D": eval_verdict("Expected Shortfall", cvar_30), "PRIORITY": "Medium"},
+        {"METRIC": "Sharpe Ratio", "LIFETIME": f"{shp_all:.2f}", "VERDICT_ALL": eval_verdict("Sharpe", shp_all), "30D": f"{shp_30:.2f}", "TARGET": "> 1.5 Return per unit of total risk", "VERDICT_30D": eval_verdict("Sharpe", shp_30), "PRIORITY": "High"},
+        {"METRIC": "Sortino Ratio", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "30D": f"{srt_30:.2f}", "TARGET": "> 2.0 (Strong) to > 3.0 (Exceptional).", "VERDICT_30D": eval_verdict("Sortino", srt_30), "PRIORITY": "High"},
+        {"METRIC": "Calmar Ratio (3-Year)", "LIFETIME": f"{calmar_all:.2f}", "VERDICT_ALL": eval_verdict("Calmar", calmar_all), "30D": f"{calmar_30:.2f}", "TARGET": "> 1.0 (Acceptable) to > 2.0 (Strong).", "VERDICT_30D": eval_verdict("Calmar", calmar_30), "PRIORITY": "High"},
+        {"METRIC": "Information Ratio (vs SPY)", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "30D": f"{ir_30:.2f}", "TARGET": "> 0.5. Alpha generated vs benchmark.", "VERDICT_30D": eval_verdict("Information Ratio", ir_30), "PRIORITY": "High"},
     ]
     return pd.DataFrame(data)
 
@@ -1673,7 +1713,7 @@ with tab3:
                     "VERDICT_30D": st.column_config.TextColumn("30D Assessment", width="small"),
                     "PRIORITY": st.column_config.TextColumn("Priority", width="small"),
                 },
-                height=500
+                height=480
             )
 
         st.divider()
