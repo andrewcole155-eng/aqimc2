@@ -504,6 +504,14 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                     elif "ABORTED" in status_clean:
                         lifecycle_stage = "🔴 HALTED"
 
+                # ---> NEW: Safely extract Point 5 & 6 CI/CD Telemetry <---
+                mmd_drift = data.get("drift_status", 0.0)
+                
+                # PSR and Deployment Status are embedded in the canonical model_config
+                model_cfg = data.get("canonical_signal", {}).get("model_config", {})
+                psr_score = data.get("psr_score", model_cfg.get("psr_score", 0.0))
+                deployment = data.get("deployment_status", model_cfg.get("deployment_status", "PRODUCTION_DEPLOYED"))
+
                 model_health[ticker] = {
                     "Status": status_clean,
                     "Lifecycle": lifecycle_stage,
@@ -514,7 +522,10 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                     "Decay": decay_val,
                     "MDD": mdd_val,
                     "Base MDD": base_mdd,
-                    "Trades": live_trades
+                    "Trades": live_trades,
+                    "MMD": mmd_drift,           # <--- NEW
+                    "PSR": psr_score,           # <--- NEW
+                    "Deployment": deployment    # <--- NEW
                 }
 
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
@@ -781,66 +792,17 @@ def calculate_advanced_metrics(hist_df):
         "Exposure Efficiency": exposure_efficiency
     }
 
-def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d, offline_state=None):
-    """
-    Constructs a dual-horizon performance scorecard comparing Lifetime vs. Trailing 30-Day performance against institutional targets.
-    """
-    if offline_state is None:
-        offline_state = {}
+# --- Live Institutional CI/CD Metrics Extraction ---
+    psr_vals, mmd_vals = [], []
+    for t_data in model_health.values():
+        if "PSR" in t_data and t_data["PSR"] > 0: psr_vals.append(t_data["PSR"])
+        if "MMD" in t_data: mmd_vals.append(t_data["MMD"])
 
-    def eval_verdict(metric_name, val):
-        if val is None:
-            return "TBD"
-        if "Deflated Sharpe" in metric_name:
-            return "🏆 Elite" if val >= 0.95 else ("✅ Target" if val >= 0.90 else "⚠️ Weak")
-        elif "Backtest Overfitting" in metric_name:
-            return "🛡️ Safe" if val <= 0.10 else ("⚠️ Monitor" if val <= 0.20 else "🚨 Overfit")
-        elif "Total Cumulative Return" in metric_name:
-            return "🏆 Elite" if val >= 0.50 else ("📈 Profitable" if val > 0 else "🔻 Loss")
-        elif "CAGR" in metric_name:
-            return "🏆 Elite" if val > 0.20 else ("✅ Target" if val >= 0.10 else "😐 Std")
-        elif "MAR" in metric_name:
-            return "🚀 Elite" if val > 1.0 else "😐 Std"
-        elif "Max Drawdown" in metric_name or "Maximum Drawdown" in metric_name:
-            return "🛡️ Safe" if abs(val) < 0.10 else ("⚠️ Monitor" if abs(val) < 0.15 else "🚨 High Risk")
-        elif "SQN" in metric_name:
-            return "🏆 Holy Grail" if val > 3.0 else ("🚀 Elite" if val > 2.0 else ("✅ Good" if val > 1.6 else "😐 Std"))
-        elif "Information Ratio" in metric_name:
-            return "🚀 Elite" if val > 1.0 else ("✅ Target" if val >= 0.5 else "😐 Std")
-        elif "Expectancy" in metric_name:
-            return "📈 Positive" if val > 0 else "🔻 Negative"
-        elif "Sharpe" in metric_name:
-            return "🔥 Good" if val > 1.5 else ("✅ Target" if val >= 1.0 else "😐 Std")
-        elif "Sortino" in metric_name:
-            return "🚀 Exceptional" if val > 3.0 else ("💎 Strong" if val > 2.0 else "😐 Std")
-        elif "Calmar" in metric_name:
-            return "💎 Strong" if val > 2.0 else ("✅ Acceptable" if val > 1.0 else "🔻 Weak")
-        elif "Market Beta" in metric_name:
-            return "🎯 Pure Alpha" if -0.10 < val < 0.10 else "⚠️ Correlated"
-        elif "Expected Shortfall" in metric_name:
-            return "✅ Bounded" if abs(val) < 5.0 else "⚠️ High Tail Risk"
-        elif "Profit Factor" in metric_name:
-            return "💰 Rich" if val > 1.5 else ("✅ Target" if val > 1.0 else "🔻 Loss")
-        elif "Daily Reliability" in metric_name:
-            return "✅ Stable" if val >= 0.50 else "🔻 Low"
-        elif "Trade Hit Rate" in metric_name:
-            return "🎯 Sniper" if val >= 0.45 else "😐 Std"
-        elif "Track Record" in metric_name:
-            return "🏛️ Credible" if val >= 24 else "🌱 Maturing"
-        return "—"
+    avg_psr = sum(psr_vals) / len(psr_vals) if psr_vals else 0.0
+    avg_mmd = sum(mmd_vals) / len(mmd_vals) if mmd_vals else 0.0
 
-    # --- Offline Institutional Metrics Extraction ---
-    dsr_vals, pbo_vals = [], []
-    tickers_data = offline_state.get("tickers", {})
-    for t_data in tickers_data.values():
-        if "DSR" in t_data: dsr_vals.append(t_data["DSR"])
-        if "PBO" in t_data: pbo_vals.append(t_data["PBO"])
-
-    avg_dsr = sum(dsr_vals) / len(dsr_vals) if dsr_vals else None
-    avg_pbo = sum(pbo_vals) / len(pbo_vals) if pbo_vals else None
-
-    dsr_display = f"{avg_dsr:.2f}" if avg_dsr is not None else "Pending Offline Calc"
-    pbo_display = f"{avg_pbo:.2f}" if avg_pbo is not None else "Pending Offline Calc"
+    psr_display = f"{avg_psr:.1%}" if psr_vals else "Pending CI/CD Gate"
+    mmd_display = f"{avg_mmd:.4f}" if mmd_vals else "Calibrating RBF"
 
     # Extract calculated metrics (Fallback to 0.0)
     tot_all = metrics_all.get('Total Return', 0.0)
@@ -877,6 +839,8 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_
 
     data = [
         # === INSTITUTIONAL ALLOCATOR METRICS ===
+        {"METRIC": "Canary PSR (Probabilistic Sharpe)", "TARGET": "> 95.0% (Statistically beats incumbent).", "LIFETIME": psr_display, "VERDICT_ALL": eval_verdict("Deflated Sharpe", avg_psr), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
+        {"METRIC": "Multivariate Drift (MMD)", "TARGET": "< 0.05. Monitored via RBF Kernel.", "LIFETIME": mmd_display, "VERDICT_ALL": "🛡️ Safe" if avg_mmd < 0.05 else "🚨 Drift", "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
         {"METRIC": "Deflated Sharpe Ratio (DSR)", "TARGET": "> 0.95 (Statistically significant at 5% level).", "LIFETIME": dsr_display, "VERDICT_ALL": eval_verdict("Deflated Sharpe Ratio", avg_dsr), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
         {"METRIC": "Prob. of Backtest Overfitting (PBO)", "TARGET": "< 0.10. Utilizing Combinatorial Purged Cross-Validation.", "LIFETIME": pbo_display, "VERDICT_ALL": eval_verdict("Backtest Overfitting", avg_pbo), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
         {"METRIC": "Market Beta (β) to S&P 500", "TARGET": "-0.10 < β < 0.10. Pure, uncorrelated alpha.", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "30D": f"{beta_30:.2f}", "VERDICT_30D": eval_verdict("Market Beta", beta_30), "PRIORITY": "High"},
@@ -1700,7 +1664,7 @@ with tab3:
             hit_rate_30d, trades_30d = 0.0, 0
 
         # Build Scorecard DataFrame
-        scorecard_df = create_scorecard_df(metrics, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d, offline_state)
+        scorecard_df = create_scorecard_df(metrics, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d, offline_state, model_health)
 
         inst_score = calculate_institutional_score(metrics)
         valid_cagr = metrics.get("CAGR", 0.0)
@@ -2156,10 +2120,15 @@ with tab6:
             status, base_ir, live_ir, decay, mdd = profile['Status'], float(profile['Base IR']), float(profile['Live IR']), float(profile['Decay']), int(profile['MDD'])
             base_wr, live_wr, base_mdd, live_trades = float(profile.get('Base WR', 0.0)), float(profile.get('Live WR', 0.0)), int(profile.get('Base MDD', 0)), int(profile.get('Trades', 0))
 
+            # ---> NEW: Extract CI/CD Metrics
+            mmd_val = float(profile.get('MMD', 0.0))
+            psr_val = float(profile.get('PSR', 0.0))
+            deploy_status = profile.get('Deployment', 'PRODUCTION_DEPLOYED')
+
             statusColor = '#00ff41' if 'OPTIMAL' in status else ('#ffb000' if 'STABLE' in status else '#ff4b4b')
             ir_diff = live_ir - base_ir
             
-            # --- FIX: Custom Override UI Text ---
+            # --- Custom Override UI Text ---
             if 'ABORTED' in status: ir_text = f"experiencing a <strong style='color: #ff4b4b;'>Critical Early Failure</strong>. The warmup phase was terminated early due to extreme out-of-sample losses (Live IR: {live_ir:.2f})."
             elif 'QUARANTINED' in status: ir_text = "currently completely suspended."
             elif 'Empirical Override' in status: ir_text = f"an impressive <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #00ff41;'>overriding</span> its negative weekend benchmark ({base_ir:.2f})."
@@ -2181,9 +2150,17 @@ with tab6:
 
             lifecycle = profile.get('Lifecycle', 'Unknown') 
 
+            # ---> NEW: Visual Badges for CI/CD
+            canary_badge = f"<span style='color: #ffb000;'>🛡️ SHADOW (PSR: {psr_val:.1%})</span>" if deploy_status == "SHADOW_DEPLOYED" else f"<span style='color: #00ff41;'>🚀 PROD (PSR: {psr_val:.1%})</span>"
+            mmd_badge = f"<span style='color: #ff4b4b;'>⚠️ High ({mmd_val:.4f})</span>" if mmd_val > 0.05 else f"<span style='color: #00ff41;'>✅ Stable ({mmd_val:.4f})</span>"
+
             html_output += f'<div style="margin-bottom: 12px; padding: 15px; border-left: 5px solid {statusColor}; background-color: #1e1e1e; border-radius: 6px;">'
             html_output += f'<strong style="font-size: 1.2em; color: #fff;">{ticker}</strong><span style="background-color: {statusColor}; color: #111; padding: 3px 8px; border-radius: 4px; font-size: 0.85em; font-weight: bold; margin-left: 10px;">{status}</span>'
             html_output += f'<div style="margin-top: 8px; font-size: 0.9em; color: #aaa;"><strong>Lifecycle Phase:</strong> <span style="color: #fff;">{lifecycle}</span></div>'
+            
+            # ---> NEW: Inject the Badges into the HTML
+            html_output += f'<div style="margin-top: 8px; font-size: 0.9em; color: #aaa;"><strong>Pipeline Gates:</strong> {canary_badge} &nbsp;|&nbsp; MMD Drift: {mmd_badge}</div>'
+            
             html_output += f'<div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; color: #aaa; background: #2a2a2a; padding: 10px; border-radius: 4px;">'
             html_output += f'<div><strong style="color: #fff;">🏗️ Training Blueprint</strong><br>Base IR: {base_ir:.2f} &nbsp;|&nbsp; Win Rate: {base_wr:.1f}% &nbsp;|&nbsp; MDD: {base_mdd}d</div>'
             html_output += f'<div><strong style="color: #fff;">⚡ Live Execution ({live_trades} Trades)</strong><br>Live IR: {live_ir:.2f} &nbsp;|&nbsp; Win Rate: {live_wr:.1f}% &nbsp;|&nbsp; Decay: {decay:.2f}</div>'
