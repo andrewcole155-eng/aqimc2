@@ -1162,22 +1162,22 @@ def generate_tactical_alerts(roll_df, global_metrics, margin_util, phys_df):
     latest_sharpe, latest_ulcer, latest_win_rate = roll_df['rolling_sharpe'].iloc[-1], roll_df['rolling_ulcer'].iloc[-1], roll_df['rolling_win_rate'].iloc[-1]
 
     if pd.notna(latest_sharpe):
-        if latest_sharpe < 0.5: alerts.append({"level": "error", "icon": "📉", "title": f"Regime Shift: Rolling Sharpe is weak ({latest_sharpe:.2f})", "action": "POSITION SIZING HALVED. The risk-adjusted edge is decaying. Base lot sizes reduced by 50% until Sharpe recovers > 1.0."})
-        elif latest_sharpe > 1.5: alerts.append({"level": "success", "icon": "🟢", "title": f"Elite Edge: Sharpe is surging ({latest_sharpe:.2f})", "action": "BASE SIZING RESTORED. The regime is highly favorable. System is deploying full-lot sizes."})
+        if latest_sharpe < 0.5: alerts.append({"level": "warning", "icon": "📉", "title": f"Regime Shift: Rolling Sharpe is weak ({latest_sharpe:.2f})", "action": "Risk-adjusted edge is currently decaying in the 30-day window. Consider manual sizing review if trend continues."})
+        elif latest_sharpe > 1.5: alerts.append({"level": "success", "icon": "🟢", "title": f"Elite Edge: Sharpe is surging ({latest_sharpe:.2f})", "action": "The regime is highly favorable. System is compounding efficiently."})
 
     if pd.notna(latest_ulcer):
-        if latest_ulcer > 4.0: alerts.append({"level": "warning", "icon": "🛡️", "title": f"Pain Threshold Reached: Ulcer Index elevated ({latest_ulcer:.2f})", "action": "DEFENSIVE MONITORING ENGAGED. Drawdowns are elevated. Agent continues to rely on baseline 2x ATR stops."})
-        elif latest_ulcer < 1.5: alerts.append({"level": "success", "icon": "🕊️", "title": f"Smooth Sailing: Low Ulcer Index ({latest_ulcer:.2f})", "action": "EDGE CONFIRMED. Drawdowns are minimal. Trades are operating cleanly within standard ATR boundaries."})
+        if latest_ulcer > 4.0: alerts.append({"level": "warning", "icon": "🛡️", "title": f"Pain Threshold Reached: Ulcer Index elevated ({latest_ulcer:.2f})", "action": "Drawdowns are elevated. Agent continues to rely on baseline 2x ATR stops."})
+        elif latest_ulcer < 1.5: alerts.append({"level": "success", "icon": "🕊️", "title": f"Smooth Sailing: Low Ulcer Index ({latest_ulcer:.2f})", "action": "Drawdowns are minimal. Trades are operating cleanly within standard ATR boundaries."})
 
     if pd.notna(latest_win_rate):
-        if latest_win_rate < 45.0: alerts.append({"level": "info", "icon": "✂️", "title": f"Choppy Execution: Win rate dropping ({latest_win_rate:.1f}%)", "action": "MARKET LACKS FOLLOW-THROUGH. Execution probabilities are skewed negatively in this environment."})
-        elif latest_win_rate > 55.0: alerts.append({"level": "success", "icon": "🏃‍♂️", "title": f"High Hit Rate: Win rate is strong ({latest_win_rate:.1f}%)", "action": "MOMENTUM CONFIRMED. Market is respecting mathematical targets efficiently."})
+        if latest_win_rate < 45.0: alerts.append({"level": "info", "icon": "✂️", "title": f"Choppy Execution: Win rate dropping ({latest_win_rate:.1f}%)", "action": "Market lacks follow-through. Execution probabilities are skewed negatively in this environment."})
+        elif latest_win_rate > 55.0: alerts.append({"level": "success", "icon": "🏃‍♂️", "title": f"High Hit Rate: Win rate is strong ({latest_win_rate:.1f}%)", "action": "Momentum confirmed. Market is respecting mathematical targets efficiently."})
 
-    if margin_util > 75.0: alerts.append({"level": "error", "icon": "🚨", "title": f"Leverage Warning: Margin at {margin_util:.1f}%", "action": "BUYING FROZEN. Leverage limits reached. No new capital will be deployed."})
+    if margin_util > 75.0: alerts.append({"level": "error", "icon": "🚨", "title": f"Leverage Warning: Margin at {margin_util:.1f}%", "action": "Leverage limits reached. Review open positions."})
 
     if not phys_df.empty:
         latest_vel, latest_acc, latest_dfe = phys_df['vel_smooth'].iloc[-1], phys_df['acc_smooth'].iloc[-1], phys_df['dfe'].iloc[-1]
-        if latest_vel <= 0 and latest_acc < 0: alerts.append({"level": "error", "icon": "🛡️", "title": "Regime Drift: PANIC / SHOCK", "action": f"Vector field confirms downward acceleration. Expected Shortfall (CVaR) is {global_metrics.get('CVaR (95%)', 0):.2f}%. Trading Agent active regime flag synced."})
+        if latest_vel <= 0 and latest_acc < 0: alerts.append({"level": "warning", "icon": "🛡️", "title": "Regime Drift: PANIC / SHOCK", "action": f"Vector field confirms downward acceleration. Expected Shortfall (CVaR) is {global_metrics.get('CVaR (95%)', 0):.2f}%."})
         elif latest_dfe > 2.5: alerts.append({"level": "warning", "icon": "⚠️", "title": f"Extreme Phase Stretch (DFE: {latest_dfe:.2f})", "action": "System is highly extended from equilibrium. Mean-reversion shock probability is elevated."})
 
     return alerts
