@@ -792,7 +792,57 @@ def calculate_advanced_metrics(hist_df):
         "Exposure Efficiency": exposure_efficiency
     }
 
-# --- Live Institutional CI/CD Metrics Extraction ---
+def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d, offline_state=None, model_health=None):
+    """
+    Constructs a dual-horizon performance scorecard comparing Lifetime vs. Trailing 30-Day performance against institutional targets.
+    """
+    if offline_state is None:
+        offline_state = {}
+    if model_health is None:
+        model_health = {}
+
+    def eval_verdict(metric_name, val):
+        if val is None:
+            return "TBD"
+        if "Deflated Sharpe" in metric_name or "Probabilistic Sharpe" in metric_name:
+            return "🏆 Elite" if val >= 0.95 else ("✅ Target" if val >= 0.90 else "⚠️ Weak")
+        elif "Backtest Overfitting" in metric_name or "Multivariate Drift" in metric_name:
+            return "🛡️ Safe" if val <= 0.05 else ("⚠️ Monitor" if val <= 0.10 else "🚨 Overfit/Drift")
+        elif "Total Cumulative Return" in metric_name:
+            return "🏆 Elite" if val >= 0.50 else ("📈 Profitable" if val > 0 else "🔻 Loss")
+        elif "CAGR" in metric_name:
+            return "🏆 Elite" if val > 0.20 else ("✅ Target" if val >= 0.10 else "😐 Std")
+        elif "MAR" in metric_name:
+            return "🚀 Elite" if val > 1.0 else "😐 Std"
+        elif "Max Drawdown" in metric_name or "Maximum Drawdown" in metric_name:
+            return "🛡️ Safe" if abs(val) < 0.10 else ("⚠️ Monitor" if abs(val) < 0.15 else "🚨 High Risk")
+        elif "SQN" in metric_name:
+            return "🏆 Holy Grail" if val > 3.0 else ("🚀 Elite" if val > 2.0 else ("✅ Good" if val > 1.6 else "😐 Std"))
+        elif "Information Ratio" in metric_name:
+            return "🚀 Elite" if val > 1.0 else ("✅ Target" if val >= 0.5 else "😐 Std")
+        elif "Expectancy" in metric_name:
+            return "📈 Positive" if val > 0 else "🔻 Negative"
+        elif "Sharpe" in metric_name:
+            return "🔥 Good" if val > 1.5 else ("✅ Target" if val >= 1.0 else "😐 Std")
+        elif "Sortino" in metric_name:
+            return "🚀 Exceptional" if val > 3.0 else ("💎 Strong" if val > 2.0 else "😐 Std")
+        elif "Calmar" in metric_name:
+            return "💎 Strong" if val > 2.0 else ("✅ Acceptable" if val > 1.0 else "🔻 Weak")
+        elif "Market Beta" in metric_name:
+            return "🎯 Pure Alpha" if -0.10 < val < 0.10 else "⚠️ Correlated"
+        elif "Expected Shortfall" in metric_name:
+            return "✅ Bounded" if abs(val) < 5.0 else "⚠️ High Tail Risk"
+        elif "Profit Factor" in metric_name:
+            return "💰 Rich" if val > 1.5 else ("✅ Target" if val > 1.0 else "🔻 Loss")
+        elif "Daily Reliability" in metric_name:
+            return "✅ Stable" if val >= 0.50 else "🔻 Low"
+        elif "Trade Hit Rate" in metric_name:
+            return "🎯 Sniper" if val >= 0.45 else "😐 Std"
+        elif "Track Record" in metric_name:
+            return "🏛️ Credible" if val >= 24 else "🌱 Maturing"
+        return "—"
+
+    # --- Live Institutional CI/CD Metrics Extraction ---
     psr_vals, mmd_vals = [], []
     for t_data in model_health.values():
         if "PSR" in t_data and t_data["PSR"] > 0: psr_vals.append(t_data["PSR"])
@@ -839,10 +889,8 @@ def calculate_advanced_metrics(hist_df):
 
     data = [
         # === INSTITUTIONAL ALLOCATOR METRICS ===
-        {"METRIC": "Canary PSR (Probabilistic Sharpe)", "TARGET": "> 95.0% (Statistically beats incumbent).", "LIFETIME": psr_display, "VERDICT_ALL": eval_verdict("Deflated Sharpe", avg_psr), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
+        {"METRIC": "Canary PSR (Probabilistic Sharpe)", "TARGET": "> 95.0% (Statistically beats incumbent).", "LIFETIME": psr_display, "VERDICT_ALL": eval_verdict("Probabilistic Sharpe", avg_psr), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
         {"METRIC": "Multivariate Drift (MMD)", "TARGET": "< 0.05. Monitored via RBF Kernel.", "LIFETIME": mmd_display, "VERDICT_ALL": "🛡️ Safe" if avg_mmd < 0.05 else "🚨 Drift", "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
-        {"METRIC": "Deflated Sharpe Ratio (DSR)", "TARGET": "> 0.95 (Statistically significant at 5% level).", "LIFETIME": dsr_display, "VERDICT_ALL": eval_verdict("Deflated Sharpe Ratio", avg_dsr), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
-        {"METRIC": "Prob. of Backtest Overfitting (PBO)", "TARGET": "< 0.10. Utilizing Combinatorial Purged Cross-Validation.", "LIFETIME": pbo_display, "VERDICT_ALL": eval_verdict("Backtest Overfitting", avg_pbo), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Serious Concern"},
         {"METRIC": "Market Beta (β) to S&P 500", "TARGET": "-0.10 < β < 0.10. Pure, uncorrelated alpha.", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "30D": f"{beta_30:.2f}", "VERDICT_30D": eval_verdict("Market Beta", beta_30), "PRIORITY": "High"},
         {"METRIC": "Minimum Track Record Length", "TARGET": "> 24 to 36 months of live trading required.", "LIFETIME": f"{trl_all:.1f} months", "VERDICT_ALL": eval_verdict("Track Record", trl_all), "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "Medium"},
         {"METRIC": "Capacity (Maximum AUM)", "TARGET": "> $100M for institutional allocators.", "LIFETIME": "Est. >$250M", "VERDICT_ALL": "✅ High Liq.", "30D": "N/A", "VERDICT_30D": "N/A", "PRIORITY": "High"},
