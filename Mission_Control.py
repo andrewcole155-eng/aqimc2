@@ -191,6 +191,7 @@ def get_account_data(_api):
     account = None
     positions = []
     all_orders = []
+    cash_flows = {}  # <--- NEW: Dynamic cash flow dictionary
     
     # 1. Fetch Core Account Data Safely
     try:
@@ -198,7 +199,7 @@ def get_account_data(_api):
         positions = [p._raw for p in _api.list_positions()]
     except Exception as e:
         print(f"Alpaca Account Fetch Error: {e}")
-        return None, [], []
+        return None, [], [], {}
         
     # 2. Fetch Orders Safely (Decoupled from Account)
     try:
@@ -217,14 +218,24 @@ def get_account_data(_api):
             if len(batch) < 500:
                 break
                 
-            # --- FIX: Safe string conversion for Alpaca pagination ---
             until_dt = pd.to_datetime(str(batch[-1].submitted_at)).tz_convert('UTC').strftime('%Y-%m-%dT%H:%M:%SZ')
             
     except Exception as e:
         print(f"Alpaca Orders Pagination Error (Safe Continue): {e}")
-        # If pagination fails, we simply return the orders successfully fetched so far
+
+    # ---> NEW: Fetch Dynamic Cash Flows from Alpaca <---
+    try:
+        # CSD=Deposit, CSW=Withdrawal, JNLC=Journal Cash (crypto sweeps), TRANS=Transfers
+        activities = _api.get_activities(activity_types=['CSD', 'CSW', 'JNLC', 'TRANS'])
+        for act in activities:
+            # Group cash flows by day
+            date_str = str(act.date)[:10] 
+            net_amount = float(act.net_amount)
+            cash_flows[date_str] = cash_flows.get(date_str, 0.0) + net_amount
+    except Exception as e:
+        print(f"Alpaca Cash Flow Fetch Error: {e}")
         
-    return account, positions, all_orders
+    return account, positions, all_orders, cash_flows
 
 @st.cache_data(ttl=3600)
 def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
@@ -319,7 +330,7 @@ def get_portfolio_history(_api):
         print(f"Portfolio History API Error: {e}") 
         return pd.DataFrame()
 
-def apply_twr_adjustments(hist_df):
+def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     """
     Calculates True Time-Weighted Return (TWR).
     Isolates actual trading performance by explicitly neutralizing capital injections (deposits/withdrawals)
@@ -330,7 +341,14 @@ def apply_twr_adjustments(hist_df):
 
     # 1. Fetch exact cash-flow ledger from the Trading Agent state
     trading_state, _, _ = get_cloud_telemetry()
-    cash_flows = trading_state.get('cash_flows', {})
+    static_cash_flows = trading_state.get('cash_flows', {})
+    
+    # ---> FIX: Merge dynamic Alpaca cash flows over the static ledger <---
+    merged_cash_flows = static_cash_flows.copy()
+    if alpaca_cash_flows:
+        for d_str, amount in alpaca_cash_flows.items():
+            if amount != 0:
+                merged_cash_flows[d_str] = amount
     
     # Ensure UTC timezone alignment
     hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'], utc=True)
@@ -340,7 +358,7 @@ def apply_twr_adjustments(hist_df):
     
     # 3. Map precise cash flows to the exact days they occurred
     hist_df['net_cash_flow'] = 0.0
-    for date_str, flow_amount in cash_flows.items():
+    for date_str, flow_amount in merged_cash_flows.items():
         try:
             flow_date = pd.to_datetime(date_str, utc=True).floor('D')
             mask = hist_df['timestamp'].dt.floor('D') == flow_date
@@ -1223,7 +1241,7 @@ with st.sidebar:
 api = init_alpaca()
 if not api: st.stop()
 
-account, positions, orders = get_account_data(api)
+account, positions, orders, live_cash_flows = get_account_data(api)
 
 # --- REPLACE ALPACA EXCURSIONS WITH TIMESCALEDB ---
 df_ex_db = fetch_timescaledb_telemetry()
