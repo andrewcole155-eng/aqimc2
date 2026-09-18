@@ -1603,18 +1603,30 @@ with tab1:
                     progress = max(0.0, min(1.0, (sl - current) / (sl - tp)))
 
                 days_held = 0
+                max_hold_display = 15
                 if isinstance(orders, list):
                     for o in orders:
                         if isinstance(o, dict) and o.get('symbol') == sym and o.get('status') == 'filled':
                             filled_at = o.get('filled_at')
                             if filled_at:
-                                try: days_held = max(0, (pd.Timestamp.now(tz='UTC') - pd.to_datetime(filled_at).tz_convert('UTC')).days)
+                                try: 
+                                    entry_dt = pd.to_datetime(filled_at).tz_convert('UTC')
+                                    current_dt = pd.Timestamp.now(tz='UTC')
+                                    
+                                    # Match backend: Calculate active trading days
+                                    calendar = api.get_calendar(start=entry_dt.date().isoformat(), end=current_dt.date().isoformat())
+                                    days_held = max(0, len(calendar) - 1)
+                                    
+                                    # Match backend: Handle Monday grace period extension
+                                    us_time = current_dt.tz_convert('US/Eastern')
+                                    if us_time.weekday() == 0:  # Monday
+                                        max_hold_display = 16
                                 except Exception: pass
                             break
 
                 pos_data.append({
                     "Ticker": sym, "Side": side.upper(), "Invested": entry * qty, "Qty": qty,
-                    "P/L (%)": float(p['unrealized_plpc']) * 100, "Journey": progress, "Days Held": f"{days_held}/5"
+                    "P/L (%)": float(p['unrealized_plpc']) * 100, "Journey": progress, "Days Held": f"{days_held}/{max_hold_display}"
                 })
             
             st.dataframe(pd.DataFrame(pos_data), width='stretch', column_config={"Invested": st.column_config.NumberColumn("Invested", format="$%.2f"), "P/L (%)": st.column_config.NumberColumn("P/L (%)", format="%.2f%%"), "Journey": st.column_config.ProgressColumn("Journey to TP", help="Green bar moving right towards Take Profit.", min_value=0.0, max_value=1.0, format="%.2f")}, hide_index=True)
