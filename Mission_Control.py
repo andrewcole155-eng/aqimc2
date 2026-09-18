@@ -1151,7 +1151,12 @@ def generate_phase_portrait(phys_df, grid_size=20):
 def calculate_rolling_edge(df, window=30):
     r_df = df.copy()
     r_df['daily_return'] = r_df['equity'].pct_change()
+    
+    # 30-Day Absolute Return
     r_df['rolling_return'] = r_df['equity'].pct_change(periods=window) * 100
+    
+    # ---> NEW: 30-Day Rolling CAGR (Annualized) <---
+    r_df['rolling_cagr'] = (((1 + (r_df['rolling_return'] / 100)) ** (252 / window)) - 1) * 100
     roll_mean, roll_std = r_df['daily_return'].rolling(window).mean(), r_df['daily_return'].rolling(window).std()
     r_df['rolling_sharpe'] = (roll_mean / roll_std) * (252 ** 0.5)
     
@@ -1877,6 +1882,7 @@ with tab3:
             c_roll3, c_roll4 = st.columns(2)
             c_roll5, c_roll6 = st.columns(2)
             c_roll7, c_roll8 = st.columns(2)
+            c_roll9, c_roll10 = st.columns(2)
 
             with c_roll1:
                 st.caption("30-Day Rolling Return (%)")
@@ -1951,6 +1957,20 @@ with tab3:
                 fig_roll_ulcer.add_hline(y=5.0, line_dash="dot", line_color="#ffb000", annotation_text="Stress Warning") 
                 fig_roll_ulcer.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=220, xaxis_title=None, yaxis_title=None)
                 st.plotly_chart(fig_roll_ulcer, width='stretch')
+
+            # ---> NEW CHART APPENDED <---
+            with c_roll9:
+                st.caption("30-Day Rolling CAGR (Annualized %)")
+                fig_roll_cagr = px.area(roll_df, x='timestamp', y='rolling_cagr')
+                fig_roll_cagr.update_traces(line_color='#00ff41', fillcolor='rgba(0, 255, 65, 0.1)')
+                fig_roll_cagr.add_hline(y=20.0, line_dash="dot", line_color="#00ff41", annotation_text="Elite Target")
+                fig_roll_cagr.add_hline(y=0, line_dash="dash", line_color="white", annotation_text="Breakeven")
+                fig_roll_cagr.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=220, xaxis_title=None, yaxis_title=None)
+                st.plotly_chart(fig_roll_cagr, width='stretch')
+
+            with c_roll10:
+                st.caption("Rolling CI/CD Pipeline Gates (MMD & PSR)")
+                st.info("Historical time-series tracking for Multivariate Drift (MMD) and Probabilistic Sharpe (PSR) requires persistent TimescaleDB telemetry appending. Backend integration pending.")
         else: st.caption("Not enough data yet for 30-Day Rolling metrics.")
 
         st.divider()
