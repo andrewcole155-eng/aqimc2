@@ -2279,7 +2279,94 @@ with tab6:
 
         st.divider()
 
-        # --- 2. MODEL CARDS ---
+        # --- 2. DUAL FLEET VISUAL MAPPING (LIVE VS SHADOW) ---
+        st.markdown("### 📊 Fleet Edge & Manifold Alignment (Live vs. Shadow)")
+        st.caption("Compares realized Information Ratio against Blueprint Hurdle. Bubble size reflects Multivariate Drift (MMD).")
+
+        fleet_rows = []
+        for t, prof in filtered_health.items():
+            deploy = prof.get('Deployment', 'PRODUCTION_DEPLOYED')
+            is_sh = (deploy == "SHADOW_DEPLOYED" or "SHADOW" in str(prof.get('Lifecycle', '')).upper())
+            fleet_rows.append({
+                "Ticker": t,
+                "Fleet": "🛡️ Shadow Fleet" if is_sh else "🚀 Live Production",
+                "Base IR": float(prof.get('Base IR', 0.0)),
+                "Live IR": float(prof.get('Live IR', 0.0)),
+                "Edge Decay": float(prof.get('Decay', 1.0)),
+                "MMD Drift": max(0.01, float(prof.get('MMD', 0.0))),
+                "Trades": int(prof.get('Trades', 0)),
+                "Win Rate (%)": float(prof.get('Live WR', 0.0))
+            })
+
+        df_fleet = pd.DataFrame(fleet_rows)
+
+        if not df_fleet.empty:
+            c_map1, c_map2 = st.columns([3, 2])
+
+            with c_map1:
+                fig_scatter = px.scatter(
+                    df_fleet,
+                    x="Base IR",
+                    y="Live IR",
+                    color="Fleet",
+                    size="MMD Drift",
+                    hover_name="Ticker",
+                    text="Ticker",
+                    color_discrete_map={"🚀 Live Production": "#00ff41", "🛡️ Shadow Fleet": "#ffb000"},
+                    hover_data=["Trades", "Win Rate (%)", "Edge Decay", "MMD Drift"]
+                )
+                # 45-degree parity line: Live IR == Base IR
+                max_axis = max(3.0, df_fleet['Base IR'].max() + 0.5, df_fleet['Live IR'].max() + 0.5)
+                min_axis = min(-1.0, df_fleet['Live IR'].min() - 0.5)
+                fig_scatter.add_shape(
+                    type="line", x0=min_axis, y0=min_axis, x1=max_axis, y1=max_axis,
+                    line=dict(color="rgba(255, 255, 255, 0.3)", width=2, dash="dash")
+                )
+                fig_scatter.add_hline(y=0.0, line_dash="dot", line_color="red", annotation_text="Zero Alpha")
+                fig_scatter.add_vline(x=0.0, line_dash="dot", line_color="gray")
+                fig_scatter.update_traces(textposition="top center", textfont=dict(color="white", size=11))
+                fig_scatter.update_layout(
+                    title="Realized Edge vs. Weekend Blueprint (Above line = Outperforming)",
+                    height=360,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color="#cccccc"),
+                    xaxis=dict(title="Blueprint Base IR", gridcolor="#333", zeroline=False),
+                    yaxis=dict(title="Live / Realized IR", gridcolor="#333", zeroline=False),
+                    legend=dict(orientation="h", y=1.1, x=0)
+                )
+                st.plotly_chart(fig_scatter, use_container_width=True)
+
+            with c_map2:
+                # Comparative Grouped Bar: Live vs. Base IR
+                fig_bar = go.Figure()
+                fig_bar.add_trace(go.Bar(
+                    x=df_fleet['Ticker'], y=df_fleet['Base IR'],
+                    name='Base IR (Blueprint)', marker_color='#569cd6'
+                ))
+                fig_bar.add_trace(go.Bar(
+                    x=df_fleet['Ticker'], y=df_fleet['Live IR'],
+                    name='Live IR (Realized)', marker_color='#00ff41'
+                ))
+                fig_bar.update_layout(
+                    title="Edge Divergence by Asset",
+                    barmode='group',
+                    height=360,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color="#cccccc"),
+                    xaxis=dict(gridcolor="#333"),
+                    yaxis=dict(title="IR Multiple", gridcolor="#333"),
+                    legend=dict(orientation="h", y=1.1, x=0)
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+        st.divider()
+
+        # --- 3. MODEL CARDS (ORGANIZED BY LIFECYCLE SEVERITY) ---
+        st.markdown("### 📋 Asset Lifecycle Dossiers")
         sorted_health = sorted(
             filtered_health.items(),
             key=lambda x: (0 if 'DEGRADED' in x[1].get('Status', '') else (1 if 'QUARANTINED' in x[1].get('Status', '') else 2))
@@ -2301,7 +2388,7 @@ with tab6:
             deploy_status = profile.get('Deployment', 'PRODUCTION_DEPLOYED')
             lifecycle = profile.get('Lifecycle', 'Unknown')
 
-            # Badge Styling
+            # Status styling
             if 'OPTIMAL' in status: status_color = '#00ff41'
             elif 'STABLE' in status: status_color = '#569cd6'
             elif 'DEGRADED' in status: status_color = '#ffb000'
@@ -2338,7 +2425,6 @@ with tab6:
             else:
                 narrative = f"The model is exhibiting edge decay, reporting a Live IR of <strong>{live_ir:.2f}</strong> ({ir_diff:.2f} vs. blueprint)."
 
-            # Hard-concatenated string to prevent Markdown from interpreting indentation as a code block
             card_html = (
                 f"<div style='margin-bottom: 16px; padding: 18px; border-left: 6px solid {status_color}; background-color: #1e1e1e; border-radius: 8px;'>"
                 f"<div style='display: flex; justify-content: space-between; align-items: center;'>"
