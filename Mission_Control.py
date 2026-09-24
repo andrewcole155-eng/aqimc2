@@ -2288,29 +2288,22 @@ with tab6:
             deploy_status = profile.get('Deployment', 'PRODUCTION_DEPLOYED')
             lifecycle = profile.get('Lifecycle', 'Unknown')
 
-            # Badge Styling
-            if 'OPTIMAL' in status:
-                status_color = '#00ff41'
-            elif 'STABLE' in status:
-                status_color = '#569cd6'
-            elif 'DEGRADED' in status:
-                status_color = '#ffb000'
-            else:
-                status_color = '#ff4b4b'
+            if 'OPTIMAL' in status: status_color = '#00ff41'
+            elif 'STABLE' in status: status_color = '#569cd6'
+            elif 'DEGRADED' in status: status_color = '#ffb000'
+            else: status_color = '#ff4b4b'
 
-            # Deployment slot resolution
             if "QUARANTINED" in status or "HALTED" in lifecycle:
-                canary_badge = "<span style='color: #ff4b4b; font-weight: bold;'>🛑 ISOLATED (Cash Protected)</span>"
+                canary_badge = f"<span style='color: #ff4b4b; font-weight: bold;'>🛑 ISOLATED (Cash Protected) | PSR: {psr_val:.1%}</span>"
             elif deploy_status == "SHADOW_DEPLOYED":
-                canary_badge = f"<span style='color: #ffb000; font-weight: bold;'>🛡️ SHADOW FLEET (PSR: {psr_val:.1%})</span>"
+                canary_badge = f"<span style='color: #ffb000; font-weight: bold;'>🛡️ SHADOW FLEET | PSR: {psr_val:.1%}</span>"
             else:
-                canary_badge = f"<span style='color: #00ff41; font-weight: bold;'>🚀 LIVE PRODUCTION (PSR: {psr_val:.1%})</span>"
+                canary_badge = f"<span style='color: #00ff41; font-weight: bold;'>🚀 LIVE PRODUCTION | PSR: {psr_val:.1%}</span>"
 
             mmd_badge = f"<span style='color: #ff4b4b;'>⚠️ Severe ({mmd_val:.4f})</span>" if mmd_val > 0.10 else (
                 f"<span style='color: #ffb000;'>⚡ Elevated ({mmd_val:.4f})</span>" if mmd_val > 0.05 else f"<span style='color: #00ff41;'>✅ Stable ({mmd_val:.4f})</span>"
             )
 
-            # Narrative Synthesis
             ir_diff = live_ir - base_ir
             if 'QUARANTINED' in status:
                 narrative = "The model is <strong>quarantined</strong>. Signal generation is locked to cash until a challenger achieves a positive Base IR."
@@ -2325,39 +2318,25 @@ with tab6:
             else:
                 narrative = f"The model is exhibiting edge decay, reporting a Live IR of <strong>{live_ir:.2f}</strong> ({ir_diff:.2f} vs. blueprint)."
 
-            html_output += f"""
-            <div style="margin-bottom: 16px; padding: 18px; border-left: 6px solid {status_color}; background-color: #1e1e1e; border-radius: 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <strong style="font-size: 1.3em; color: #fff;">{ticker}</strong>
-                        <span style="background-color: {status_color}; color: #111; padding: 3px 10px; border-radius: 4px; font-size: 0.85em; font-weight: bold; margin-left: 10px;">{status}</span>
-                    </div>
-                    <div style="font-size: 0.9em; color: #aaa;">
-                        Slot: {canary_badge}
-                    </div>
-                </div>
-                
-                <div style="margin-top: 10px; font-size: 0.9em; color: #aaa;">
-                    <strong>Lifecycle Phase:</strong> <span style="color: #fff;">{lifecycle}</span> &nbsp;|&nbsp; 
-                    <strong>Manifold Drift:</strong> {mmd_badge}
-                </div>
-
-                <div style="margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.88em; color: #aaa; background: #252526; padding: 12px; border-radius: 6px;">
-                    <div>
-                        <strong style="color: #569cd6;">🏗️ Weekend Training Blueprint</strong><br>
-                        Base IR: <strong>{base_ir:.2f}</strong> &nbsp;|&nbsp; Win Rate: {base_wr:.1f}% &nbsp;|&nbsp; MDD Duration: {base_mdd}d
-                    </div>
-                    <div>
-                        <strong style="color: #4ec9b0;">⚡ Live Out-of-Sample Execution ({live_trades} Trades)</strong><br>
-                        Live IR: <strong>{live_ir:.2f}</strong> &nbsp;|&nbsp; Win Rate: {live_wr:.1f}% &nbsp;|&nbsp; Edge Decay: <strong>{decay:.2f}</strong>
-                    </div>
-                </div>
-
-                <div style="margin-top: 12px; font-size: 0.92em; line-height: 1.5; color: #ccc;">
-                    {narrative}
-                </div>
-            </div>
-            """
+            # Hard-concatenated string to prevent Markdown from interpreting indentation as a code block
+            card_html = (
+                f"<div style='margin-bottom: 16px; padding: 18px; border-left: 6px solid {status_color}; background-color: #1e1e1e; border-radius: 8px;'>"
+                f"<div style='display: flex; justify-content: space-between; align-items: center;'>"
+                f"<div><strong style='font-size: 1.3em; color: #fff;'>{ticker}</strong>"
+                f"<span style='background-color: {status_color}; color: #111; padding: 3px 10px; border-radius: 4px; font-size: 0.85em; font-weight: bold; margin-left: 10px;'>{status}</span></div>"
+                f"<div style='font-size: 0.9em; color: #aaa;'>Slot: {canary_badge}</div>"
+                f"</div>"
+                f"<div style='margin-top: 10px; font-size: 0.9em; color: #aaa;'>"
+                f"<strong>Lifecycle Phase:</strong> <span style='color: #fff;'>{lifecycle}</span> &nbsp;|&nbsp; <strong>Manifold Drift:</strong> {mmd_badge}"
+                f"</div>"
+                f"<div style='margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.88em; color: #aaa; background: #252526; padding: 12px; border-radius: 6px;'>"
+                f"<div><strong style='color: #569cd6;'>🏗️ Weekend Training Blueprint</strong><br>Base IR: <strong>{base_ir:.2f}</strong> &nbsp;|&nbsp; Win Rate: {base_wr:.1f}% &nbsp;|&nbsp; MDD Duration: {base_mdd}d</div>"
+                f"<div><strong style='color: #4ec9b0;'>⚡ Live Out-of-Sample Execution ({live_trades} Trades)</strong><br>Live IR: <strong>{live_ir:.2f}</strong> &nbsp;|&nbsp; Win Rate: {live_wr:.1f}% &nbsp;|&nbsp; Edge Decay: <strong>{decay:.2f}</strong></div>"
+                f"</div>"
+                f"<div style='margin-top: 12px; font-size: 0.92em; line-height: 1.5; color: #ccc;'>{narrative}</div>"
+                f"</div>"
+            )
+            html_output += card_html
 
         st.markdown(html_output, unsafe_allow_html=True)
     else:
