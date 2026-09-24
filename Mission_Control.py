@@ -484,7 +484,6 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                 readiness_status = data.get("readiness_status", "UNKNOWN")
 
                 # --- FRONTEND EMPIRICAL OVERRIDE ---
-                # Independently verify live performance so the UI never visually halts a proven asset
                 if live_trades >= 15 and live_ir >= 1.0:
                     readiness_status = "READY"
 
@@ -522,13 +521,27 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                     elif "ABORTED" in status_clean:
                         lifecycle_stage = "🔴 HALTED"
 
-                # ---> NEW: Safely extract Point 5 & 6 CI/CD Telemetry <---
+                # ---> ROBUST CI/CD & SHADOW EXTRACTION <---
                 mmd_drift = data.get("drift_status", 0.0)
-                
-                # PSR and Deployment Status are embedded in the canonical model_config
                 model_cfg = data.get("canonical_signal", {}).get("model_config", {})
-                psr_score = data.get("psr_score", model_cfg.get("psr_score", 0.0))
-                deployment = data.get("deployment_status", model_cfg.get("deployment_status", "PRODUCTION_DEPLOYED"))
+                tearsheet_cfg = data.get("tearsheet_metrics", {})
+
+                # Extract PSR score with hierarchical fallback
+                psr_score = data.get("psr_score", 
+                            model_cfg.get("psr_score", 
+                            tearsheet_cfg.get("psr_score", 0.0)))
+
+                # Extract deployment status with hierarchical fallback
+                deployment = data.get("deployment_status", 
+                             data.get("lifecycle_stage", 
+                             model_cfg.get("deployment_status", 
+                             tearsheet_cfg.get("deployment_status", "PRODUCTION_DEPLOYED"))))
+
+                # Ensure models that failed promotion correctly track as SHADOW
+                if (base_ir <= 0.0 and readiness_status != "READY") or "SHADOW" in str(deployment).upper():
+                    deployment = "SHADOW_DEPLOYED"
+                    if lifecycle_stage == "🔴 HALTED":
+                        lifecycle_stage = "🛡️ SHADOW (Quarantined)"
 
                 model_health[ticker] = {
                     "Status": status_clean,
@@ -541,9 +554,9 @@ def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
                     "MDD": mdd_val,
                     "Base MDD": base_mdd,
                     "Trades": live_trades,
-                    "MMD": mmd_drift,           # <--- NEW
-                    "PSR": psr_score,           # <--- NEW
-                    "Deployment": deployment    # <--- NEW
+                    "MMD": mmd_drift,
+                    "PSR": psr_score,
+                    "Deployment": deployment
                 }
 
     ts_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})')
@@ -2288,15 +2301,21 @@ with tab6:
             deploy_status = profile.get('Deployment', 'PRODUCTION_DEPLOYED')
             lifecycle = profile.get('Lifecycle', 'Unknown')
 
+            # Badge Styling
             if 'OPTIMAL' in status: status_color = '#00ff41'
             elif 'STABLE' in status: status_color = '#569cd6'
             elif 'DEGRADED' in status: status_color = '#ffb000'
             else: status_color = '#ff4b4b'
 
-            if "QUARANTINED" in status or "HALTED" in lifecycle:
-                canary_badge = f"<span style='color: #ff4b4b; font-weight: bold;'>🛑 ISOLATED (Cash Protected) | PSR: {psr_val:.1%}</span>"
-            elif deploy_status == "SHADOW_DEPLOYED":
-                canary_badge = f"<span style='color: #ffb000; font-weight: bold;'>🛡️ SHADOW FLEET | PSR: {psr_val:.1%}</span>"
+            # Deployment slot resolution
+            is_shadow = (deploy_status == "SHADOW_DEPLOYED" or "SHADOW" in str(lifecycle).upper())
+
+            if is_shadow and ("QUARANTINED" in status or "HALTED" in str(lifecycle).upper()):
+                canary_badge = f"<span style='color: #ffb000; font-weight: bold;'>🛡️ SHADOW FLEET (Quarantined / Paper) | PSR: {psr_val:.1%}</span>"
+            elif is_shadow:
+                canary_badge = f"<span style='color: #ffb000; font-weight: bold;'>🛡️ SHADOW FLEET (Active Paper) | PSR: {psr_val:.1%}</span>"
+            elif "QUARANTINED" in status or "HALTED" in str(lifecycle).upper():
+                canary_badge = f"<span style='color: #ff4b4b; font-weight: bold;'>🛑 PROD HALTED (Cash Protected) | PSR: {psr_val:.1%}</span>"
             else:
                 canary_badge = f"<span style='color: #00ff41; font-weight: bold;'>🚀 LIVE PRODUCTION | PSR: {psr_val:.1%}</span>"
 
@@ -2304,6 +2323,7 @@ with tab6:
                 f"<span style='color: #ffb000;'>⚡ Elevated ({mmd_val:.4f})</span>" if mmd_val > 0.05 else f"<span style='color: #00ff41;'>✅ Stable ({mmd_val:.4f})</span>"
             )
 
+            # Narrative Synthesis
             ir_diff = live_ir - base_ir
             if 'QUARANTINED' in status:
                 narrative = "The model is <strong>quarantined</strong>. Signal generation is locked to cash until a challenger achieves a positive Base IR."
