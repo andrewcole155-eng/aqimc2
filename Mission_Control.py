@@ -2235,75 +2235,133 @@ with tab5:
     else: st.info("Gathering historical Policy Landscape data. Waiting for Daily Inference Agent payload...")
 
 with tab6:
-    st.subheader("🧠 Quantum Alpha Model Lifecycle Monitor")
-    st.markdown("Real-time alignment tracking between weekend optimization blueprints and live out-of-sample market execution.")
+    st.subheader("🧬 Quantum Alpha Model Lifecycle & Shadow Fleet Monitor")
+    st.caption("Real-time alignment tracking between weekend optimization blueprints, shadow paper trading, and live execution.")
 
     if model_health:
         if isinstance(model_health, str):
             try: model_health = json.loads(model_health)
             except ValueError: model_health = {}
-            
-        # --- NEW: Filter out "ghost" models from previous runs ---
-        valid_tickers = load_global_config().get("asset_index_map", {}).keys()
+
+        valid_tickers = list(load_global_config().get("asset_index_map", {}).keys())
         filtered_health = {k: v for k, v in model_health.items() if k in valid_tickers}
+
+        # --- 1. EXECUTIVE FLEET SUMMARY METRICS ---
+        total_models = len(filtered_health)
+        active_prod = sum(1 for m in filtered_health.values() if "OPTIMAL" in m.get('Status', '') or "ACTIVE" in m.get('Lifecycle', ''))
+        quarantined = sum(1 for m in filtered_health.values() if "QUARANTINED" in m.get('Status', '') or "HALTED" in m.get('Lifecycle', ''))
+        shadow_count = sum(1 for m in filtered_health.values() if m.get('Deployment') == "SHADOW_DEPLOYED" or "SHADOW" in m.get('Lifecycle', ''))
         
-        sorted_health = sorted(filtered_health.items(), key=lambda x: 0 if 'DEGRADED' in x[1].get('Status', '') else 1) if isinstance(filtered_health, dict) else []
+        mmd_list = [float(m.get('MMD', 0.0)) for m in filtered_health.values() if 'MMD' in m]
+        fleet_mmd = sum(mmd_list) / len(mmd_list) if mmd_list else 0.0
+
+        f1, f2, f3, f4, f5 = st.columns(5)
+        f1.metric("Universe Tracked", f"{total_models} Tickers")
+        f2.metric("🟢 Active Production", f"{active_prod} Models")
+        f3.metric("🔴 Quarantined / Cash", f"{quarantined} Models")
+        f4.metric("🛡️ Shadow Paper Fleet", f"{shadow_count} Models")
+        f5.metric("Fleet Avg MMD Drift", f"{fleet_mmd:.4f}", 
+                  delta="⚠️ High Drift" if fleet_mmd > 0.05 else "✅ Stable", 
+                  delta_color="inverse")
+
+        st.divider()
+
+        # --- 2. MODEL CARDS ---
+        sorted_health = sorted(
+            filtered_health.items(),
+            key=lambda x: (0 if 'DEGRADED' in x[1].get('Status', '') else (1 if 'QUARANTINED' in x[1].get('Status', '') else 2))
+        )
 
         html_output = ""
         for ticker, profile in sorted_health:
-            status, base_ir, live_ir, decay, mdd = profile['Status'], float(profile['Base IR']), float(profile['Live IR']), float(profile['Decay']), int(profile['MDD'])
-            base_wr, live_wr, base_mdd, live_trades = float(profile.get('Base WR', 0.0)), float(profile.get('Live WR', 0.0)), int(profile.get('Base MDD', 0)), int(profile.get('Trades', 0))
-
-            # ---> NEW: Extract CI/CD Metrics
+            status = profile.get('Status', 'UNKNOWN')
+            base_ir = float(profile.get('Base IR', 0.0))
+            live_ir = float(profile.get('Live IR', 0.0))
+            decay = float(profile.get('Decay', 1.0))
+            mdd = int(profile.get('MDD', 0))
+            base_wr = float(profile.get('Base WR', 0.0))
+            live_wr = float(profile.get('Live WR', 0.0))
+            base_mdd = int(profile.get('Base MDD', 0))
+            live_trades = int(profile.get('Trades', 0))
             mmd_val = float(profile.get('MMD', 0.0))
             psr_val = float(profile.get('PSR', 0.0))
             deploy_status = profile.get('Deployment', 'PRODUCTION_DEPLOYED')
+            lifecycle = profile.get('Lifecycle', 'Unknown')
 
-            statusColor = '#00ff41' if 'OPTIMAL' in status else ('#ffb000' if 'STABLE' in status else '#ff4b4b')
+            # Badge Styling
+            if 'OPTIMAL' in status:
+                status_color = '#00ff41'
+            elif 'STABLE' in status:
+                status_color = '#569cd6'
+            elif 'DEGRADED' in status:
+                status_color = '#ffb000'
+            else:
+                status_color = '#ff4b4b'
+
+            # Deployment slot resolution
+            if "QUARANTINED" in status or "HALTED" in lifecycle:
+                canary_badge = "<span style='color: #ff4b4b; font-weight: bold;'>🛑 ISOLATED (Cash Protected)</span>"
+            elif deploy_status == "SHADOW_DEPLOYED":
+                canary_badge = f"<span style='color: #ffb000; font-weight: bold;'>🛡️ SHADOW FLEET (PSR: {psr_val:.1%})</span>"
+            else:
+                canary_badge = f"<span style='color: #00ff41; font-weight: bold;'>🚀 LIVE PRODUCTION (PSR: {psr_val:.1%})</span>"
+
+            mmd_badge = f"<span style='color: #ff4b4b;'>⚠️ Severe ({mmd_val:.4f})</span>" if mmd_val > 0.10 else (
+                f"<span style='color: #ffb000;'>⚡ Elevated ({mmd_val:.4f})</span>" if mmd_val > 0.05 else f"<span style='color: #00ff41;'>✅ Stable ({mmd_val:.4f})</span>"
+            )
+
+            # Narrative Synthesis
             ir_diff = live_ir - base_ir
-            
-            # --- Custom Override UI Text ---
-            if 'ABORTED' in status: ir_text = f"experiencing a <strong style='color: #ff4b4b;'>Critical Early Failure</strong>. The warmup phase was terminated early due to extreme out-of-sample losses (Live IR: {live_ir:.2f})."
-            elif 'QUARANTINED' in status: ir_text = "currently completely suspended."
-            elif 'Empirical Override' in status: ir_text = f"an impressive <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #00ff41;'>overriding</span> its negative weekend benchmark ({base_ir:.2f})."
-            elif live_trades < 5: ir_text = f"currently in a <strong>Warmup Phase ({live_trades}/5 trades)</strong>. Edge decay algorithms will engage once sufficient out-of-sample data is collected against the benchmark IR of {base_ir:.2f}."
-            elif live_ir >= base_ir: ir_text = f"an impressive <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #00ff41;'>outperforming</span> its weekend benchmark ({base_ir:.2f}) by +{ir_diff:.2f}."
-            elif live_ir >= 0: ir_text = f"a <strong>Live Information Ratio of {live_ir:.2f}</strong>. While generating positive alpha, it is <span style='color: #ffb000;'>underperforming</span> its weekend benchmark ({base_ir:.2f}) by {ir_diff:.2f}."
-            else: ir_text = f"a negative <strong>Live Information Ratio of {live_ir:.2f}</strong>, <span style='color: #ff4b4b;'>failing</span> to meet its weekend benchmark ({base_ir:.2f}) by a margin of {ir_diff:.2f}."
+            if 'QUARANTINED' in status:
+                narrative = "The model is <strong>quarantined</strong>. Signal generation is locked to cash until a challenger achieves a positive Base IR."
+            elif 'ABORTED' in status:
+                narrative = f"The model experienced an <strong>aborted warmup</strong> due to out-of-sample stress (Live IR: {live_ir:.2f})."
+            elif 'Empirical' in status:
+                narrative = f"The model is operating with an empirical override: live execution (IR: {live_ir:.2f}) is actively superseding validation fold limits."
+            elif live_trades < 5:
+                narrative = f"The model is in <strong>active warmup ({live_trades}/5 trades)</strong>. Dynamic decay controls will arm once sample significance is met."
+            elif live_ir >= base_ir:
+                narrative = f"The model is exhibiting strong edge persistence, producing a Live IR of <strong>{live_ir:.2f}</strong> (+{ir_diff:.2f} vs. blueprint)."
+            else:
+                narrative = f"The model is exhibiting edge decay, reporting a Live IR of <strong>{live_ir:.2f}</strong> ({ir_diff:.2f} vs. blueprint)."
 
-            if 'Empirical Override' in status: decay_text = "The Empirical Override gate is active. Live reality has superseded the validation fold constraint, protecting empirical alpha."
-            elif decay == 0.0 and base_ir <= 0.0: decay_text = "Model is quarantined due to a negative baseline edge. Trading must be disabled."
-            elif decay == 1.0 and 'ABORTED' in status: decay_text = "Model execution halted to protect capital."
-            elif decay >= 0.70: decay_text = f"The asset decay factor is excellent at <strong>{decay:.2f}</strong>, indicating strong structural alignment with the training blueprint."
-            elif decay >= 0.40: decay_text = f"The asset decay factor sits at <strong style='color: #ffb000;'>{decay:.2f}</strong>, showing moderate edge erosion but remaining above the 0.40 throttle threshold."
-            else: decay_text = f"Severe edge erosion detected with a decay factor of <strong style='color: #ff4b4b;'>{decay:.2f}</strong> (Critically below the 0.40 threshold), triggering autonomous risk throttling."
+            html_output += f"""
+            <div style="margin-bottom: 16px; padding: 18px; border-left: 6px solid {status_color}; background-color: #1e1e1e; border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong style="font-size: 1.3em; color: #fff;">{ticker}</strong>
+                        <span style="background-color: {status_color}; color: #111; padding: 3px 10px; border-radius: 4px; font-size: 0.85em; font-weight: bold; margin-left: 10px;">{status}</span>
+                    </div>
+                    <div style="font-size: 0.9em; color: #aaa;">
+                        Slot: {canary_badge}
+                    </div>
+                </div>
+                
+                <div style="margin-top: 10px; font-size: 0.9em; color: #aaa;">
+                    <strong>Lifecycle Phase:</strong> <span style="color: #fff;">{lifecycle}</span> &nbsp;|&nbsp; 
+                    <strong>Manifold Drift:</strong> {mmd_badge}
+                </div>
 
-            if mdd <= 21: mdd_text = f"Drawdown duration is safely contained at <strong>{mdd} days</strong>."
-            elif mdd <= 42: mdd_text = f"Drawdown duration is stretching to <strong style='color: #ffb000;'>{mdd} days</strong>, approaching pain thresholds."
-            else: mdd_text = f"Drawdown duration has breached limits at <strong style='color: #ff4b4b;'>{mdd} days</strong>."
+                <div style="margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.88em; color: #aaa; background: #252526; padding: 12px; border-radius: 6px;">
+                    <div>
+                        <strong style="color: #569cd6;">🏗️ Weekend Training Blueprint</strong><br>
+                        Base IR: <strong>{base_ir:.2f}</strong> &nbsp;|&nbsp; Win Rate: {base_wr:.1f}% &nbsp;|&nbsp; MDD Duration: {base_mdd}d
+                    </div>
+                    <div>
+                        <strong style="color: #4ec9b0;">⚡ Live Out-of-Sample Execution ({live_trades} Trades)</strong><br>
+                        Live IR: <strong>{live_ir:.2f}</strong> &nbsp;|&nbsp; Win Rate: {live_wr:.1f}% &nbsp;|&nbsp; Edge Decay: <strong>{decay:.2f}</strong>
+                    </div>
+                </div>
 
-            lifecycle = profile.get('Lifecycle', 'Unknown') 
-
-            # ---> NEW: Visual Badges for CI/CD
-            canary_badge = f"<span style='color: #ffb000;'>🛡️ SHADOW (PSR: {psr_val:.1%})</span>" if deploy_status == "SHADOW_DEPLOYED" else f"<span style='color: #00ff41;'>🚀 PROD (PSR: {psr_val:.1%})</span>"
-            mmd_badge = f"<span style='color: #ff4b4b;'>⚠️ High ({mmd_val:.4f})</span>" if mmd_val > 0.05 else f"<span style='color: #00ff41;'>✅ Stable ({mmd_val:.4f})</span>"
-
-            html_output += f'<div style="margin-bottom: 12px; padding: 15px; border-left: 5px solid {statusColor}; background-color: #1e1e1e; border-radius: 6px;">'
-            html_output += f'<strong style="font-size: 1.2em; color: #fff;">{ticker}</strong><span style="background-color: {statusColor}; color: #111; padding: 3px 8px; border-radius: 4px; font-size: 0.85em; font-weight: bold; margin-left: 10px;">{status}</span>'
-            html_output += f'<div style="margin-top: 8px; font-size: 0.9em; color: #aaa;"><strong>Lifecycle Phase:</strong> <span style="color: #fff;">{lifecycle}</span></div>'
-            
-            # ---> NEW: Inject the Badges into the HTML
-            html_output += f'<div style="margin-top: 8px; font-size: 0.9em; color: #aaa;"><strong>Pipeline Gates:</strong> {canary_badge} &nbsp;|&nbsp; MMD Drift: {mmd_badge}</div>'
-            
-            html_output += f'<div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; color: #aaa; background: #2a2a2a; padding: 10px; border-radius: 4px;">'
-            html_output += f'<div><strong style="color: #fff;">🏗️ Training Blueprint</strong><br>Base IR: {base_ir:.2f} &nbsp;|&nbsp; Win Rate: {base_wr:.1f}% &nbsp;|&nbsp; MDD: {base_mdd}d</div>'
-            html_output += f'<div><strong style="color: #fff;">⚡ Live Execution ({live_trades} Trades)</strong><br>Live IR: {live_ir:.2f} &nbsp;|&nbsp; Win Rate: {live_wr:.1f}% &nbsp;|&nbsp; Decay: {decay:.2f}</div>'
-            html_output += f'</div><p style="margin: 10px 0 0 0; font-size: 0.95em; line-height: 1.6; color: #ccc;">The model is {ir_text}<br><br>'
-            if live_trades >= 5 or 'Empirical' in status: html_output += f'{decay_text} {mdd_text}'
-            html_output += f'</p></div>'
+                <div style="margin-top: 12px; font-size: 0.92em; line-height: 1.5; color: #ccc;">
+                    {narrative}
+                </div>
+            </div>
+            """
 
         st.markdown(html_output, unsafe_allow_html=True)
-    else: st.info("Awaiting model performance data from the live execution log stream...")
+    else:
+        st.info("Awaiting model performance data from the live execution log stream...")
 
 if auto_refresh:
     from streamlit_autorefresh import st_autorefresh
