@@ -243,42 +243,30 @@ def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
     # Force Mission Control to strictly use the 12-ticker production matrix
     return {
         "asset_index_map": {
-            # 1. TECHNOLOGY (XLK)
-            "IONQ": "Tech/Quantum",
-            "PYPL": "Tech/FinTech",
-            "ZETA": "Tech/Software",
-            "NTNX": "Tech/Cloud",
-            "DBX":  "Tech/Software",
-            
-            # 2. COMMUNICATION SERVICES (XLC)
-            "CNK":  "Communication Services",
-            
-            # 3. ENERGY (XLE)
-            "OXY":  "Energy",
-            "SLB":  "Energy",
-            
-            # 4. HEALTHCARE (XLV)
-            "BMY":  "Healthcare",
-            "QGEN": "Healthcare/MedTech",
-            "PFE":  "Healthcare",
-            
-            # 5. FINANCIALS (XLF)
-            "TPG":  "Financials",
-            "HRB":  "Financials",
-            
-            # 6. CONSUMER STAPLES / DEFENSIVE (XLP)
-            "KO":   "Consumer Defensive",
-            "FRPT": "Consumer Defensive",
-            
-            # 7. CONSUMER CYCLICAL / DISCRETIONARY (XLY)
-            "GM":   "Consumer Cyclical",
-            
-            # 8. BASIC MATERIALS (XLB)
-            "AA":   "Basic Materials",
-            
-            # 9. INDUSTRIALS (XLI)
-            "DAL":  "Industrials"
-        }
+        # 1. TECHNOLOGY (XLK)
+        "IONQ": "Tech/Quantum",
+        "NTNX": "Tech/Cloud",
+        "ZETA": "Tech/Software",
+        "MARA": "Tech/Compute",
+        "PYPL": "Tech/FinTech",
+        
+        # 2. FINANCIAL SERVICES (XLF)
+        "SOFI": "Financials",
+        
+        # 3. COMMUNICATION SERVICES (XLC)
+        "SNAP": "Communication Services",
+        "ASTS": "Communication Services",
+        
+        # 4. CONSUMER CYCLICAL / DISCRETIONARY (XLY)
+        "RIVN": "Consumer Cyclical",
+        
+        # 5. INDUSTRIALS & DEFENSE (XLI)
+        "ONDS": "Industrials",
+        
+        # 6. ENERGY & CLEAN TECH (XLE)
+        "RUN":  "Energy",
+        "ENPH": "Energy"
+    }
     }
 
     try:
