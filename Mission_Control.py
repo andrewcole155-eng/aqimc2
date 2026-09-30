@@ -344,15 +344,26 @@ def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     # 2. Calculate daily raw equity changes
     hist_df['equity_change'] = hist_df['equity'].diff().fillna(0)
     
-    # 3. Map precise cash flows to the exact days they occurred
+    # ---> FIX: ROBUST CASH FLOW MAPPING <---
+    # Convert timestamps to simple YYYY-MM-DD strings for foolproof matching
+    hist_df['date_str'] = hist_df['timestamp'].dt.strftime('%Y-%m-%d')
     hist_df['net_cash_flow'] = 0.0
+    
     for date_str, flow_amount in merged_cash_flows.items():
         try:
-            flow_date = pd.to_datetime(date_str, utc=True).floor('D')
-            mask = hist_df['timestamp'].dt.floor('D') == flow_date
+            # Find the index of the matching date string
+            mask = hist_df['date_str'] == date_str
             if mask.any():
                 hist_df.loc[mask, 'net_cash_flow'] += float(flow_amount)
-        except Exception:
+            else:
+                # If the exact date is missing (e.g., weekend/holiday deposit), apply it to the NEXT available trading day
+                flow_date = pd.to_datetime(date_str, utc=True).tz_localize(None)
+                future_dates = hist_df[hist_df['timestamp'].dt.tz_localize(None) > flow_date]
+                if not future_dates.empty:
+                    next_valid_idx = future_dates.index[0]
+                    hist_df.loc[next_valid_idx, 'net_cash_flow'] += float(flow_amount)
+        except Exception as e:
+            print(f"Error mapping cash flow for {date_str}: {e}")
             continue
             
     # 4. Calculate True Daily Return (HPR - Holding Period Return)
@@ -395,7 +406,7 @@ def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     hist_df['equity'] = hist_df['twr_equity']
     
     # Cleanup intermediate columns
-    hist_df.drop(columns=['equity_change', 'net_cash_flow', 'twr_return'], inplace=True)
+    hist_df.drop(columns=['equity_change', 'net_cash_flow', 'twr_return', 'date_str'], inplace=True)
     
     return hist_df
 
