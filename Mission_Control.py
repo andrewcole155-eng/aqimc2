@@ -305,8 +305,13 @@ def get_portfolio_history(_api):
         if not history.timestamp: 
             return pd.DataFrame()
             
-        df = pd.DataFrame({'timestamp': history.timestamp, 'equity': history.equity})
+        df = pd.DataFrame({
+            'timestamp': history.timestamp, 
+            'equity': history.equity,
+            'profit_loss': history.profit_loss  # <--- NEW: Extract Native PnL
+        })
         df['equity'] = pd.to_numeric(df['equity'], errors='coerce').ffill()
+        df['profit_loss'] = pd.to_numeric(df['profit_loss'], errors='coerce').ffill()
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
         
         inception_date = pd.to_datetime('2025-05-24', utc=True)
@@ -320,84 +325,36 @@ def get_portfolio_history(_api):
 
 def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     """
-    Calculates True Time-Weighted Return (TWR).
-    Isolates actual trading performance by explicitly neutralizing capital injections (deposits/withdrawals)
-    rather than relying on dangerous statistical smoothing.
+    Calculates True Time-Weighted Return (TWR) using Native Alpaca Profit/Loss.
+    This completely eliminates artificial drawdowns caused by cash-flow date misalignments.
     """
     if hist_df.empty:
         return hist_df
 
-    # 1. Fetch exact cash-flow ledger from the Trading Agent state
-    trading_state, _, _ = get_cloud_telemetry()
-    static_cash_flows = trading_state.get('cash_flows', {})
-    
-    # ---> FIX: Merge dynamic Alpaca cash flows over the static ledger <---
-    merged_cash_flows = static_cash_flows.copy()
-    if alpaca_cash_flows:
-        for d_str, amount in alpaca_cash_flows.items():
-            if amount != 0:
-                merged_cash_flows[d_str] = amount
-    
-    # Ensure UTC timezone alignment
     hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'], utc=True)
     
-    # 2. Calculate daily raw equity changes
-    hist_df['equity_change'] = hist_df['equity'].diff().fillna(0)
-    
-    # ---> FIX: ROBUST CASH FLOW MAPPING <---
-    # Convert timestamps to simple YYYY-MM-DD strings for foolproof matching
-    hist_df['date_str'] = hist_df['timestamp'].dt.strftime('%Y-%m-%d')
-    hist_df['net_cash_flow'] = 0.0
-    
-    for date_str, flow_amount in merged_cash_flows.items():
-        try:
-            # Find the index of the matching date string
-            mask = hist_df['date_str'] == date_str
-            if mask.any():
-                hist_df.loc[mask, 'net_cash_flow'] += float(flow_amount)
-            else:
-                # If the exact date is missing (e.g., weekend/holiday deposit), apply it to the NEXT available trading day
-                flow_date = pd.to_datetime(date_str, utc=True).tz_localize(None)
-                future_dates = hist_df[hist_df['timestamp'].dt.tz_localize(None) > flow_date]
-                if not future_dates.empty:
-                    next_valid_idx = future_dates.index[0]
-                    hist_df.loc[next_valid_idx, 'net_cash_flow'] += float(flow_amount)
-        except Exception as e:
-            print(f"Error mapping cash flow for {date_str}: {e}")
-            continue
-            
-    # 4. Calculate True Daily Return (HPR - Holding Period Return)
-    # Formula: R_t = (E_t - E_{t-1} - CF_t) / (E_{t-1} + CF_{in})
-    # Assumes deposits happen at the start of the day, withdrawals at the end
-    
-    hist_df['twr_return'] = 0.0
-    
-    for i in range(1, len(hist_df)):
-        prev_equity = hist_df['equity'].iloc[i-1]
-        curr_equity = hist_df['equity'].iloc[i]
-        net_cf = hist_df['net_cash_flow'].iloc[i]
+    if 'profit_loss' in hist_df.columns:
+        # 1. Native Alpaca Pure PnL (Immune to deposit date mismatch)
+        hist_df['daily_pnl'] = hist_df['profit_loss'].diff().fillna(0.0)
         
-        # If no previous equity exists (day 1), return is 0
-        if prev_equity <= 0:
-            hist_df.loc[hist_df.index[i], 'twr_return'] = 0.0
-            continue
-            
-        # Denominator adjusts based on cash flow direction to prevent division distortion
-        if net_cf > 0:
-            denominator = prev_equity + net_cf
-        else:
-            denominator = prev_equity
-            
-        twr = (curr_equity - prev_equity - net_cf) / denominator
-        hist_df.loc[hist_df.index[i], 'twr_return'] = twr
-
+        # 2. Extract baseline equity to calculate percentage return
+        prev_equity = hist_df['equity'].shift(1)
+        
+        # 3. Calculate True Return
+        hist_df['twr_return'] = np.where(
+            prev_equity > 0,
+            hist_df['daily_pnl'] / prev_equity,
+            0.0
+        )
+    else:
+        # Fallback if profit_loss is somehow missing
+        hist_df['twr_return'] = hist_df['equity'].pct_change().fillna(0)
+    
     # Replace infinite/NaN values with 0
     hist_df['twr_return'] = hist_df['twr_return'].replace([np.inf, -np.inf], 0).fillna(0)
-    
-    # Map the TWR back to the standard 'daily_return' column expected by the rest of the dashboard
     hist_df['daily_return'] = hist_df['twr_return']
     
-    # 5. Reconstruct the clean TWR Equity Curve
+    # 4. Reconstruct the clean TWR Equity Curve
     true_starting_principal = hist_df['equity'].iloc[0] if not pd.isna(hist_df['equity'].iloc[0]) else 100.0
     hist_df['twr_equity'] = true_starting_principal * (1 + hist_df['daily_return']).cumprod()
     hist_df['twr_equity'] = hist_df['twr_equity'].fillna(true_starting_principal)
@@ -406,7 +363,9 @@ def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     hist_df['equity'] = hist_df['twr_equity']
     
     # Cleanup intermediate columns
-    hist_df.drop(columns=['equity_change', 'net_cash_flow', 'twr_return', 'date_str'], inplace=True)
+    if 'daily_pnl' in hist_df.columns:
+        hist_df.drop(columns=['daily_pnl'], inplace=True)
+    hist_df.drop(columns=['twr_return'], inplace=True)
     
     return hist_df
 
@@ -1342,7 +1301,17 @@ roll_df, phys_df = pd.DataFrame(), pd.DataFrame()
 
 if not hist_df_raw.empty and account:
     if hist_df_raw['timestamp'].dt.tz is None: hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
-    hist_df_raw = pd.concat([hist_df_raw, pd.DataFrame([{'timestamp': pd.Timestamp.now(tz='UTC'), 'equity': float(account['equity'])}])], ignore_index=True)
+    
+    # Calculate today's cumulative profit loss safely
+    last_cum_pl = hist_df_raw['profit_loss'].iloc[-1] if 'profit_loss' in hist_df_raw.columns else 0.0
+    today_pnl = float(account.get('equity', 0)) - float(account.get('last_equity', 0))
+    
+    new_row = {
+        'timestamp': pd.Timestamp.now(tz='UTC'), 
+        'equity': float(account['equity']),
+        'profit_loss': last_cum_pl + today_pnl  # <--- Append cumulative live PnL
+    }
+    hist_df_raw = pd.concat([hist_df_raw, pd.DataFrame([new_row])], ignore_index=True)
     hist_df_adj = apply_twr_adjustments(hist_df_raw.copy())
 
     spy_df = get_historical_spy(hist_df_adj['timestamp'].min().strftime('%Y-%m-%d'))
