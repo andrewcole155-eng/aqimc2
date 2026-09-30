@@ -191,15 +191,14 @@ def get_account_data(_api):
     account = None
     positions = []
     all_orders = []
-    cash_flows = {}  # <--- NEW: Dynamic cash flow dictionary
-    
+
     # 1. Fetch Core Account Data Safely
     try:
         account = _api.get_account()._raw
         positions = [p._raw for p in _api.list_positions()]
     except Exception as e:
         print(f"Alpaca Account Fetch Error: {e}")
-        return None, [], [], {}
+        return None, [], []
         
     # 2. Fetch Orders Safely (Decoupled from Account)
     try:
@@ -223,20 +222,9 @@ def get_account_data(_api):
     except Exception as e:
         print(f"Alpaca Orders Pagination Error (Safe Continue): {e}")
 
-    # ---> FIX: ONLY FETCH TRUE EXTERNAL BANK TRANSFERS <---
-    try:
-        # CSD=Deposit, CSW=Withdrawal. 
-        # REMOVED JNLC and TRANS so internal USDT crypto sales are ignored!
-        activities = _api.get_activities(activity_types=['CSD', 'CSW'])
-        for act in activities:
-            # Group cash flows by day
-            date_str = str(act.date)[:10] 
-            net_amount = float(act.net_amount)
-            cash_flows[date_str] = cash_flows.get(date_str, 0.0) + net_amount
-    except Exception as e:
-        print(f"Alpaca Cash Flow Fetch Error: {e}")
-        
-    return account, positions, all_orders, cash_flows
+    # Cash flows are now handled directly from Angel Bot Logs telemetry,
+    # bypassing Alpaca's activity stream which incorrectly flags USDT crypto sales.
+    return account, positions, all_orders
 
 @st.cache_data(ttl=3600)
 def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
@@ -1230,7 +1218,8 @@ with st.sidebar:
 api = init_alpaca()
 if not api: st.stop()
 
-account, positions, orders, live_cash_flows = get_account_data(api)
+# 1. Signature updated: live_cash_flows removed from Alpaca payload
+account, positions, orders = get_account_data(api)
 
 # --- REPLACE ALPACA EXCURSIONS WITH TIMESCALEDB ---
 df_ex_db = fetch_timescaledb_telemetry()
@@ -1262,6 +1251,10 @@ if account:
 
     trading_state, inference_state, offline_state = get_cloud_telemetry() 
     json_signals = inference_state.get("tickers", inference_state.get("signals", {}))
+
+    # ---> NEW: Extract clean cash flows strictly from Angel Bot JSON state <---
+    # This prevents the metric inflation caused by Alpaca's USDT liquidations
+    clean_cash_flows = trading_state.get("cash_flows", inference_state.get("cash_flows", {}))
 
     total_var = 0.0
     if positions:
@@ -1712,8 +1705,8 @@ with tab3:
         if hist_df_raw['timestamp'].dt.tz is None: hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
         hist_df_raw = pd.concat([hist_df_raw, pd.DataFrame([{'timestamp': pd.Timestamp.now(tz='UTC'), 'equity': float(account['equity'])}])], ignore_index=True)
         
-        # MUST pass live_cash_flows extracted from Alpaca
-        hist_df_adj = apply_twr_adjustments(hist_df_raw.copy(), alpaca_cash_flows=live_cash_flows)
+        # ---> FIX: Pass clean_cash_flows extracted from Angel Bot Logs instead of Alpaca
+        hist_df_adj = apply_twr_adjustments(hist_df_raw.copy(), alpaca_cash_flows=clean_cash_flows)
         current_equity_raw = float(account['equity'])
         metrics = st.session_state.get('global_metrics', {})
         
