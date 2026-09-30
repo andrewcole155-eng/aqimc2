@@ -191,6 +191,7 @@ def get_account_data(_api):
     account = None
     positions = []
     all_orders = []
+    cash_flows = {}  # <--- NEW: Dynamic cash flow dictionary
     
     # 1. Fetch Core Account Data Safely
     try:
@@ -222,8 +223,20 @@ def get_account_data(_api):
     except Exception as e:
         print(f"Alpaca Orders Pagination Error (Safe Continue): {e}")
 
-    # Return empty dict for cash flows to isolate Angel Bot logs
-    return account, positions, all_orders, {}
+    # ---> FIX: ONLY FETCH TRUE EXTERNAL BANK TRANSFERS <---
+    try:
+        # CSD=Deposit, CSW=Withdrawal. 
+        # REMOVED JNLC and TRANS so internal USDT crypto sales are ignored!
+        activities = _api.get_activities(activity_types=['CSD', 'CSW'])
+        for act in activities:
+            # Group cash flows by day
+            date_str = str(act.date)[:10] 
+            net_amount = float(act.net_amount)
+            cash_flows[date_str] = cash_flows.get(date_str, 0.0) + net_amount
+    except Exception as e:
+        print(f"Alpaca Cash Flow Fetch Error: {e}")
+        
+    return account, positions, all_orders, cash_flows
 
 @st.cache_data(ttl=3600)
 def load_global_config(config_path='config_Alpaca_REAL_V2.json'):
@@ -308,81 +321,64 @@ def get_portfolio_history(_api):
 
 def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     """
-    Calculates True Time-Weighted Return (TWR) using Angel Bot's declared allocated cash.
-    Since Alpaca's total equity includes dormant USDT, selling USDT to USD does not change
-    total equity. Therefore, we track an internal 'Allocated Capital' baseline to isolate bot ROI.
+    Calculates True Time-Weighted Return (TWR) using ONLY verified external bank transfers.
+    Completely ignores internal USDT/Crypto liquidations.
     """
     if hist_df.empty:
         return hist_df
 
-    # Ensure UTC timezone alignment and string matching
+    # Force UTC timeline and reset index
     hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'], utc=True)
-    hist_df['date_str'] = hist_df['timestamp'].dt.tz_localize(None).dt.strftime('%Y-%m-%d')
-    
-    # 1. Fetch exact cash-flow ledger from the Angel Bot logs
-    trading_state, _, _ = get_cloud_telemetry()
-    merged_cash_flows = trading_state.get('cash_flows', {})
-    
-    # Map cash flows securely to exact dates using string matching
+    hist_df = hist_df.sort_values('timestamp').reset_index(drop=True)
     hist_df['net_cash_flow'] = 0.0
-    for date_str, flow_amount in merged_cash_flows.items():
-        mask = hist_df['date_str'] == date_str
-        if mask.any():
-            hist_df.loc[mask, 'net_cash_flow'] += float(flow_amount)
-        else:
-            # Forward fill to next available trading day (e.g. weekend manual deposits)
+    
+    # ---> FIX: EXCLUSIVELY USE FILTERED ALPACA CASH FLOWS <---
+    if alpaca_cash_flows:
+        for date_str, amount in alpaca_cash_flows.items():
+            if amount == 0: 
+                continue
             try:
-                flow_date = pd.to_datetime(date_str)
-                future_dates = hist_df[hist_df['timestamp'].dt.tz_localize(None) >= flow_date]
-                if not future_dates.empty:
-                    next_valid_idx = future_dates.index[0]
-                    hist_df.loc[next_valid_idx, 'net_cash_flow'] += float(flow_amount)
-            except Exception:
-                pass
+                # Find the first portfolio snapshot on or immediately after the bank transfer
+                flow_date = pd.to_datetime(date_str, utc=True)
+                mask = hist_df['timestamp'] >= flow_date
+                if mask.any():
+                    target_idx = hist_df[mask].index[0]
+                    hist_df.loc[target_idx, 'net_cash_flow'] += float(amount)
+            except Exception as e:
+                print(f"Failed to map cash flow for {date_str}: {e}")
                 
-    # 2. Calculate daily pure trading PnL
-    # Because USDT->USD swaps do NOT alter Alpaca total equity, any change in total equity is pure algorithmic PnL
-    hist_df['trading_pnl'] = hist_df['equity'].diff().fillna(0.0)
-    
-    # 3. Calculate Returns based strictly on Allocated Capital
+    # Calculate True Daily Return (HPR - Holding Period Return)
     hist_df['twr_return'] = 0.0
-    allocated_capital = 0.0
     
-    for i in range(len(hist_df)):
+    for i in range(1, len(hist_df)):
+        prev_equity = hist_df['equity'].iloc[i-1]
+        curr_equity = hist_df['equity'].iloc[i]
         net_cf = hist_df['net_cash_flow'].iloc[i]
-        pnl = hist_df['trading_pnl'].iloc[i]
         
-        # Add deposit to active capital at start of day
-        if net_cf > 0:
-            allocated_capital += net_cf
+        if prev_equity <= 0:
+            hist_df.loc[hist_df.index[i], 'twr_return'] = 0.0
+            continue
             
-        if allocated_capital > 0:
-            twr = pnl / allocated_capital
-        else:
-            twr = 0.0
-            
+        # If CF is positive (deposit), it increases the capital base for the day
+        denominator = prev_equity + net_cf if net_cf > 0 else prev_equity
+        
+        twr = (curr_equity - prev_equity - net_cf) / denominator
         hist_df.loc[hist_df.index[i], 'twr_return'] = twr
-        
-        # Update capital for next day (End of day accounting)
-        allocated_capital += pnl
-        if net_cf < 0: # Withdrawals
-            allocated_capital += net_cf
-            
+
     # Replace infinite/NaN values with 0
     hist_df['twr_return'] = hist_df['twr_return'].replace([np.inf, -np.inf], 0).fillna(0)
     hist_df['daily_return'] = hist_df['twr_return']
     
-    # 4. Reconstruct the clean TWR Equity Curve 
-    # Standardize starting principal to $10,000 to cleanly view percentage growth over time
-    true_starting_principal = 10000.0 
+    # Reconstruct the clean TWR Equity Curve
+    true_starting_principal = hist_df['equity'].iloc[0] if not pd.isna(hist_df['equity'].iloc[0]) else 100.0
     hist_df['twr_equity'] = true_starting_principal * (1 + hist_df['daily_return']).cumprod()
     hist_df['twr_equity'] = hist_df['twr_equity'].fillna(true_starting_principal)
     
-    # Overwrite raw equity with the isolated algorithmic curve
+    # Overwrite raw equity with the pure algorithmic curve
     hist_df['equity'] = hist_df['twr_equity']
     
     # Cleanup intermediate columns
-    hist_df.drop(columns=['date_str', 'net_cash_flow', 'trading_pnl', 'twr_return', 'twr_equity'], inplace=True, errors='ignore')
+    hist_df.drop(columns=['net_cash_flow', 'twr_return', 'twr_equity'], inplace=True, errors='ignore')
     
     return hist_df
 
@@ -982,18 +978,12 @@ def calculate_future_projections(start_date, starting_equity, target_cagr, weekl
 def get_historical_spy(start_date_str):
     try:
         spy = yf.download("SPY", start=start_date_str, progress=False, threads=False)
-        # Fix for yfinance >= 0.2.40 returning MultiIndex columns
-        if isinstance(spy.columns, pd.MultiIndex):
-            spy.columns = [col[0] for col in spy.columns]
-            
-        close_series = spy['Close']
+        close_series = spy['Close'].iloc[:, 0] if isinstance(spy.columns, pd.MultiIndex) else spy['Close']
         df = pd.DataFrame({'spy_close': close_series})
         df.index = pd.to_datetime(df.index).tz_localize(None).floor('D')
         df['spy_return'] = df['spy_close'].pct_change()
         return df[['spy_return']].dropna()
-    except Exception as e: 
-        print(f"SPY Benchmark Data Error: {e}")
-        return pd.DataFrame()
+    except Exception: return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def run_monte_carlo_simulation(historical_returns, starting_equity, weekly_deposit=140, years=20, paths=500):
@@ -1722,7 +1712,8 @@ with tab3:
         if hist_df_raw['timestamp'].dt.tz is None: hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
         hist_df_raw = pd.concat([hist_df_raw, pd.DataFrame([{'timestamp': pd.Timestamp.now(tz='UTC'), 'equity': float(account['equity'])}])], ignore_index=True)
         
-        hist_df_adj = apply_twr_adjustments(hist_df_raw.copy())
+        # MUST pass live_cash_flows extracted from Alpaca
+        hist_df_adj = apply_twr_adjustments(hist_df_raw.copy(), alpaca_cash_flows=live_cash_flows)
         current_equity_raw = float(account['equity'])
         metrics = st.session_state.get('global_metrics', {})
         
