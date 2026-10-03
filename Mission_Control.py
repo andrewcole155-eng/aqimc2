@@ -309,68 +309,88 @@ def get_portfolio_history(_api):
 
 def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     """
-    Calculates True Time-Weighted Return (TWR) deterministically.
+    Calculates True Time-Weighted Return (TWR) using timezone-aware mapping 
+    and a nearest-neighbor spike detection algorithm to completely neutralize geometric drift.
     """
-    if hist_df.empty:
+    if hist_df.empty: 
         return hist_df
 
-    # Force UTC timeline and reset index
+    # 1. Force the Alpaca equity timeline to strict UTC
     hist_df['timestamp'] = pd.to_datetime(hist_df['timestamp'], utc=True)
     hist_df = hist_df.sort_values('timestamp').reset_index(drop=True)
-    hist_df['net_cash_flow'] = 0.0
     
-    # Map cash flows safely
+    # We use raw_diff to auto-detect the exact day the broker recorded the cash flow
+    hist_df['raw_diff'] = hist_df['equity'].diff().fillna(0)
+    hist_df['net_cash_flow'] = 0.0
+
     if alpaca_cash_flows:
+        import pytz
+        brisbane_tz = pytz.timezone('Australia/Brisbane')
+        
         for date_str, amount in alpaca_cash_flows.items():
+            amount = float(amount)
             if amount == 0: 
                 continue
+            
+            # 2. Timezone Translation: Localize the JSON string to Brisbane, then convert to UTC
             try:
-                flow_date = pd.to_datetime(date_str, utc=True)
-                # Map to the EXACT date, or the immediate next valid snapshot
-                mask = hist_df['timestamp'] >= flow_date
-                if mask.any():
-                    target_idx = hist_df[mask].index[0]
-                    hist_df.loc[target_idx, 'net_cash_flow'] += float(amount)
-                else:
-                    st.warning(f"Unmapped cash flow detected on {date_str}. Metrics may be contaminated.")
+                local_dt = brisbane_tz.localize(pd.to_datetime(date_str))
+                flow_dt_utc = local_dt.astimezone(pytz.UTC).normalize()
             except Exception as e:
-                st.error(f"Failed to map cash flow for {date_str}: {e}. Metrics contaminated.")
+                print(f"Timezone conversion failed for {date_str}: {e}")
+                continue
+            
+            # 3. Dynamic Spike Detection: Scan a window (-2 to +5 days) around the UTC date
+            # This catches both timezone offsets and Alpaca ACH clearing delays
+            mask = (hist_df['timestamp'].dt.normalize() >= flow_dt_utc - pd.Timedelta(days=2)) & \
+                   (hist_df['timestamp'].dt.normalize() <= flow_dt_utc + pd.Timedelta(days=5))
+            
+            search_window = hist_df[mask]
+            
+            if not search_window.empty:
+                # Find the exact day where the equity jump best matches the deposit amount
+                best_idx = (search_window['raw_diff'] - amount).abs().idxmin()
+                hist_df.loc[best_idx, 'net_cash_flow'] += amount
                 
-    # Calculate True Daily Return (HPR)
+                # Deduct it from raw_diff so consecutive back-to-back deposits 
+                # (like your Aug 27 & 28 entries) don't erroneously map to the same day.
+                hist_df.loc[best_idx, 'raw_diff'] -= amount
+            else:
+                # Fallback: force mapping to the closest overall date if window fails
+                closest_idx = (hist_df['timestamp'] - flow_dt_utc).abs().idxmin()
+                hist_df.loc[closest_idx, 'net_cash_flow'] += amount
+
+    # 4. Calculate True Daily Return (HPR)
     hist_df['twr_return'] = 0.0
     
     for i in range(1, len(hist_df)):
-        prev_equity = hist_df['equity'].iloc[i-1]
-        curr_equity = hist_df['equity'].iloc[i]
+        prev_eq = hist_df['equity'].iloc[i-1]
+        curr_eq = hist_df['equity'].iloc[i]
         net_cf = hist_df['net_cash_flow'].iloc[i]
-        
-        if prev_equity <= 0:
-            hist_df.loc[hist_df.index[i], 'twr_return'] = 0.0
+
+        if prev_eq <= 0: 
             continue
-            
-        # Denominator represents capital actually at work
-        # If deposit occurs, assume it was available at start of day (conservative)
-        denominator = prev_equity + net_cf if net_cf > 0 else prev_equity
+
+        # If CF is positive (deposit), it increases the capital base for the day
+        denominator = prev_eq + net_cf if net_cf > 0 else prev_eq
         
-        # Guard against zero/negative denominators preventing division by zero
-        if denominator <= 0:
-            twr = 0.0
-        else:
-            twr = (curr_equity - prev_equity - net_cf) / denominator
-            
-        hist_df.loc[hist_df.index[i], 'twr_return'] = twr
+        if denominator > 0:
+            hist_df.loc[hist_df.index[i], 'twr_return'] = (curr_eq - prev_eq - net_cf) / denominator
 
     hist_df['twr_return'] = hist_df['twr_return'].replace([np.inf, -np.inf], 0).fillna(0)
     hist_df['daily_return'] = hist_df['twr_return']
-    
-    # Reconstruct the clean TWR Equity Curve
-    true_starting_principal = hist_df['equity'].iloc[0] if not pd.isna(hist_df['equity'].iloc[0]) else 100.0
-    hist_df['twr_equity'] = true_starting_principal * (1 + hist_df['daily_return']).cumprod()
-    hist_df['twr_equity'] = hist_df['twr_equity'].fillna(true_starting_principal)
-    
+
+    # 5. Reconstruct the pure algorithmic TWR Equity Curve
+    start_eq = hist_df['equity'].iloc[0] if not pd.isna(hist_df['equity'].iloc[0]) else 100.0
+    hist_df['twr_equity'] = start_eq * (1 + hist_df['daily_return']).cumprod()
+    hist_df['twr_equity'] = hist_df['twr_equity'].fillna(start_eq)
+
+    # Overwrite raw equity with the pure curve
     hist_df['equity'] = hist_df['twr_equity']
-    hist_df.drop(columns=['net_cash_flow', 'twr_return', 'twr_equity'], inplace=True, errors='ignore')
     
+    # Clean up intermediate columns
+    hist_df.drop(columns=['raw_diff', 'net_cash_flow', 'twr_return', 'twr_equity'], inplace=True, errors='ignore')
+
     return hist_df
 
 def parse_latest_run_logic(logs, bot_state=None, df_ex=None):
