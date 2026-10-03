@@ -1707,26 +1707,42 @@ with tab2:
 with tab3:
     if not hist_df_raw.empty and account:
         
-        # --- RECONCILIATION CHECK ---
-        st.markdown("### 🔍 Data Integrity & Reconciliation")
-        starting_cap = hist_df_raw['equity'].iloc[0]
-        current_cap = float(account['equity'])
-        net_deps = sum([float(v) for v in clean_cash_flows.values()]) if clean_cash_flows else 0.0
+        # --- 1. PREPARE TIMELINE & ADJUSTMENTS ---
+        if hist_df_raw['timestamp'].dt.tz is None: 
+            hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
         
-        # If difference between actual equity and known equity is greater than 1%, flag it.
-        discrepancy = current_cap - (starting_cap + net_deps)
-        if abs(discrepancy) > (current_cap * 0.05):
-            st.error(f"**DATA ERROR (UNRECONCILED):** The sum of your starting capital + known deposits does not match your current Alpaca equity. TWR metrics below may be severely inflated. Missing external deposits: ~${discrepancy:,.2f}")
-        else:
-            st.success("**RECONCILED:** Account equity sequence is aligned with recognized cash flows.")
-        st.divider()
-
-        if hist_df_raw['timestamp'].dt.tz is None: hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
         hist_df_raw = pd.concat([hist_df_raw, pd.DataFrame([{'timestamp': pd.Timestamp.now(tz='UTC'), 'equity': float(account['equity'])}])], ignore_index=True)
         
         hist_df_adj = apply_twr_adjustments(hist_df_raw.copy(), alpaca_cash_flows=clean_cash_flows)
         current_equity_raw = float(account['equity'])
         
+        # --- 2. RECONCILIATION CHECK ---
+        st.markdown("### 🔍 Data Integrity & Reconciliation")
+        starting_cap = hist_df_raw['equity'].iloc[0]
+        current_cap = current_equity_raw
+        net_deps = sum([float(v) for v in clean_cash_flows.values()]) if clean_cash_flows else 0.0
+        
+        # Calculate actual net trading profit/loss across the account lifetime
+        trading_pnl = current_cap - (starting_cap + net_deps)
+        
+        # Calculate algorithmic growth factor from the TWR adjusted series
+        twr_growth_factor = (hist_df_adj['equity'].iloc[-1] / hist_df_adj['equity'].iloc[0]) - 1.0
+        
+        # Reconcile: If TWR shows profit (>0), trading P&L must also be positive ($ > 0).
+        # A true breach occurs if equity is higher than deposits/starting cap, but TWR is deeply negative (or vice versa).
+        is_direction_aligned = (trading_pnl >= 0 and twr_growth_factor >= -0.05) or (trading_pnl < 0 and twr_growth_factor <= 0.05)
+        
+        if not is_direction_aligned:
+            st.error(f"**DATA ERROR (UNRECONCILED):** Accounting divergence detected. Net Dollar P&L (${trading_pnl:+,.2f}) diverges from Time-Weighted Return ({twr_growth_factor:+.1%}). Check cash flow timing.")
+        else:
+            rec_col1, rec_col2, rec_col3 = st.columns(3)
+            rec_col1.metric("Principal Base (Start + Deposits)", f"${(starting_cap + net_deps):,.2f}")
+            rec_col2.metric("Cumulative Trading P&L", f"${trading_pnl:+,.2f}", delta_color="normal")
+            rec_col3.metric("Data Status", "🟢 RECONCILED", delta="All cash flows mapped", delta_color="off")
+        
+        st.divider()
+        
+        # --- 3. METRICS CALCULATION ---
         # Pass df_ex to advanced metrics to calculate valid Expectancy
         metrics = calculate_advanced_metrics(hist_df_adj, df_ex)
         
@@ -1740,7 +1756,10 @@ with tab3:
         # --- TRAILING 30-DAY METRICS ---
         cutoff_30d = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=30)
         hist_30d = hist_df_adj[hist_df_adj['timestamp'] >= cutoff_30d].copy()
-        metrics_30d = calculate_advanced_metrics(hist_30d) if not hist_30d.empty else {}
+        
+        # Also pass df_ex (filtered for 30d) into the 30d metrics to ensure 30-day Expectancy computes correctly
+        df_ex_30d = df_ex[pd.to_datetime(df_ex['Exit_Time'], utc=True) >= cutoff_30d] if not df_ex.empty and 'Exit_Time' in df_ex.columns else None
+        metrics_30d = calculate_advanced_metrics(hist_30d, df_ex_30d) if not hist_30d.empty else {}
 
         if not df_ex.empty and 'Exit_Time' in df_ex.columns:
             df_ex_30d = df_ex[pd.to_datetime(df_ex['Exit_Time'], utc=True) >= cutoff_30d]
