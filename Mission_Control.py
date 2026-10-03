@@ -1707,7 +1707,7 @@ with tab2:
 with tab3:
     if not hist_df_raw.empty and account:
         
-        # --- 1. PREPARE TIMELINE & ADJUSTMENTS ---
+        # --- 1. PREPARE LIFETIME TIMELINE & ADJUSTMENTS ---
         if hist_df_raw['timestamp'].dt.tz is None: 
             hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
         
@@ -1716,7 +1716,7 @@ with tab3:
         hist_df_adj = apply_twr_adjustments(hist_df_raw.copy(), alpaca_cash_flows=clean_cash_flows)
         current_equity_raw = float(account['equity'])
         
-        # --- 2. RECONCILIATION CHECK ---
+        # --- 2. GLOBAL RECONCILIATION CHECK ---
         st.markdown("### 🔍 Data Integrity & Reconciliation")
         starting_cap = hist_df_raw['equity'].iloc[0]
         current_cap = current_equity_raw
@@ -1729,7 +1729,6 @@ with tab3:
         twr_growth_factor = (hist_df_adj['equity'].iloc[-1] / hist_df_adj['equity'].iloc[0]) - 1.0
         
         # Reconcile: If TWR shows profit (>0), trading P&L must also be positive ($ > 0).
-        # A true breach occurs if equity is higher than deposits/starting cap, but TWR is deeply negative (or vice versa).
         is_direction_aligned = (trading_pnl >= 0 and twr_growth_factor >= -0.05) or (trading_pnl < 0 and twr_growth_factor <= 0.05)
         
         if not is_direction_aligned:
@@ -1741,8 +1740,85 @@ with tab3:
             rec_col3.metric("Data Status", "🟢 RECONCILED", delta="All cash flows mapped", delta_color="off")
         
         st.divider()
+
+        # --- 3. INTERACTIVE REGIME / ERA SLICER ---
+        c_era1, c_era2 = st.columns([2, 3])
+        with c_era1:
+            perf_window = st.selectbox(
+                "📅 Strategy Performance Window (Era Slicer)",
+                ["Current Volatile Regime (Last 28 Days)", "All-Time (Lifetime)", "Last 90 Days", "Custom Date"],
+                index=0
+            )
         
-        # --- 3. METRICS CALCULATION ---
+        now_utc = pd.Timestamp.now(tz='UTC')
+        if perf_window == "Current Volatile Regime (Last 28 Days)":
+            window_start = now_utc - pd.Timedelta(days=28)
+        elif perf_window == "Last 90 Days":
+            window_start = now_utc - pd.Timedelta(days=90)
+        elif perf_window == "Custom Date":
+            with c_era2:
+                picked_date = st.date_input("Select Cutoff Date", value=(now_utc - pd.Timedelta(days=28)).date())
+                window_start = pd.to_datetime(picked_date, utc=True)
+        else:
+            window_start = hist_df_raw['timestamp'].min()
+
+        # Slice Data to Selected Window
+        hist_df_window_raw = hist_df_raw[hist_df_raw['timestamp'] >= window_start].copy()
+        
+        # Filter cash flows strictly within this era
+        window_cash_flows = {
+            k: v for k, v in clean_cash_flows.items() 
+            if pd.to_datetime(k, utc=True) >= window_start
+        } if clean_cash_flows else {}
+
+        # Re-apply TWR to the isolated window
+        hist_df_window_adj = apply_twr_adjustments(hist_df_window_raw.copy(), alpaca_cash_flows=window_cash_flows)
+        
+        # Slice closed trade log (df_ex)
+        df_ex_window = pd.DataFrame()
+        if not df_ex.empty and 'Exit_Time' in df_ex.columns:
+            df_ex_window = df_ex[pd.to_datetime(df_ex['Exit_Time'], utc=True) >= window_start].copy()
+
+        # Compute Era-Specific Metrics
+        era_metrics = calculate_advanced_metrics(hist_df_window_adj, df_ex_window)
+
+        # Era Reconciliation & Snapshot Display
+        st.markdown(f"#### 📊 Isolated Regime Snapshot: {perf_window}")
+        era_start_cap = hist_df_window_raw['equity'].iloc[0] if not hist_df_window_raw.empty else 0.0
+        era_current_cap = current_equity_raw
+        era_deps = sum([float(v) for v in window_cash_flows.values()])
+        era_trading_pnl = era_current_cap - (era_start_cap + era_deps)
+
+        m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+        m_col1.metric("Era Starting Equity", f"${era_start_cap:,.2f}")
+        m_col2.metric("Deposits in Window", f"${era_deps:,.2f}")
+        m_col3.metric("Era Trading P&L ($)", f"${era_trading_pnl:+,.2f}", delta_color="normal")
+        m_col4.metric("Era TWR Return (%)", f"{era_metrics.get('Total Return', 0.0):+.2%}")
+        
+        # Asset-by-Asset Breakdown for the current window
+        if not df_ex_window.empty:
+            with st.expander("View Era Trade Attribution (Per-Ticker Breakdown)", expanded=False):
+                ticker_summary = []
+                for ticker, group in df_ex_window.groupby('Ticker'):
+                    t_trades = len(group)
+                    t_wins = len(group[group['Result'] == 'Win'])
+                    t_wr = (t_wins / t_trades) * 100 if t_trades > 0 else 0
+                    t_avg_pnl = group['PnL (%)'].mean()
+                    t_net_pct = group['PnL (%)'].sum()
+                    ticker_summary.append({
+                        "Ticker": ticker,
+                        "Trades": t_trades,
+                        "Win Rate": f"{t_wr:.0f}%",
+                        "Avg Return / Trade": f"{t_avg_pnl:+.2f}%",
+                        "Cumulative Trade Gain": f"{t_net_pct:+.2f}%"
+                    })
+                
+                df_ticker_sum = pd.DataFrame(ticker_summary).sort_values("Cumulative Trade Gain", ascending=False)
+                st.dataframe(df_ticker_sum, use_container_width=True, hide_index=True)
+
+        st.divider()
+        
+        # --- 4. SCORECARD METRICS CALCULATION (LIFETIME & 30D) ---
         # Pass df_ex to advanced metrics to calculate valid Expectancy
         metrics = calculate_advanced_metrics(hist_df_adj, df_ex)
         
@@ -1754,7 +1830,7 @@ with tab3:
             hit_rate_all, trades_all = 0.0, 0
 
         # --- TRAILING 30-DAY METRICS ---
-        cutoff_30d = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=30)
+        cutoff_30d = now_utc - pd.Timedelta(days=30)
         hist_30d = hist_df_adj[hist_df_adj['timestamp'] >= cutoff_30d].copy()
         
         # Also pass df_ex (filtered for 30d) into the 30d metrics to ensure 30-day Expectancy computes correctly
