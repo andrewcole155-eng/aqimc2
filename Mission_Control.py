@@ -1861,7 +1861,7 @@ with tab3:
         with col_gauge:
             fig_gauge = go.Figure(go.Indicator(
                 mode = "gauge+number", value = inst_score, domain = {'x': [0, 1], 'y': [0, 1]},
-                title = {'text': "Strategy Grade (28D)", 'font': {'size': 20, 'color': '#e0e0e0'}},
+                title = {'text': "Strategy Grade (Last 28 Days)", 'font': {'size': 20, 'color': '#e0e0e0'}},
                 number = {'suffix': "/100", 'font': {'color': '#e0e0e0'}},
                 gauge = {
                     'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "#333"},
