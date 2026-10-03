@@ -707,7 +707,8 @@ def calculate_seasonality(df):
 def calculate_advanced_metrics(hist_df, df_ex=None):
     """
     Calculates deterministic, institutional-grade risk metrics.
-    df_ex (Trade Log) is strictly required for Expectancy and Win Rate to avoid domain confusion.
+    df_ex (Trade Log) is strictly required for Expectancy and Trade Hit Rate.
+    hist_df is used for account-level returns and Daily Reliability.
     """
     if hist_df.empty: return {}
     df = hist_df.copy()
@@ -727,13 +728,13 @@ def calculate_advanced_metrics(hist_df, df_ex=None):
     max_dd = ((df['equity'] - df['peak']) / df['peak']).min()
     mar = (cagr / abs(max_dd)) if max_dd < 0 else 0 
 
-    # --- CORRECTED: Sharpe Ratio (Arithmetic Annualization) ---
+    # --- Sharpe Ratio (Arithmetic Annualization) ---
     daily_rf = 0.04 / 252
     excess_returns = returns - daily_rf
     volatility = returns.std() * np.sqrt(252)
     sharpe = (excess_returns.mean() * 252) / volatility if volatility > 0 else 0.0
     
-    # --- CORRECTED: Sortino Ratio (Target Downside Deviation / RMS) ---
+    # --- Sortino Ratio (Target Downside Deviation / RMS) ---
     downside_squared = np.minimum(0, excess_returns) ** 2
     target_downside_dev = np.sqrt(downside_squared.mean()) * np.sqrt(252)
     sortino = (excess_returns.mean() * 252) / target_downside_dev if target_downside_dev > 0 else 0.0
@@ -753,17 +754,22 @@ def calculate_advanced_metrics(hist_df, df_ex=None):
     else:
         information_ratio, beta_val = 0.0, 0.0
 
-    # --- CORRECTED: Expectancy must be derived from trade execution data (df_ex), not daily portfolio returns ---
+    # --- Trade Hit Rate & Expectancy (from Trade Execution Logs) ---
     if df_ex is not None and not df_ex.empty and 'PnL (%)' in df_ex.columns:
         wins = df_ex[df_ex['PnL (%)'] > 0]['PnL (%)']
         losses = df_ex[df_ex['PnL (%)'] <= 0]['PnL (%)']
-        win_rate = len(wins) / len(df_ex)
+        trade_hit_rate = len(wins) / len(df_ex)
         avg_win = wins.mean() / 100.0 if not wins.empty else 0.0
         avg_loss = abs(losses.mean() / 100.0) if not losses.empty else 0.0
-        expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
+        expectancy = (trade_hit_rate * avg_win) - ((1 - trade_hit_rate) * avg_loss)
         sqn = (len(df_ex) ** 0.5) * (expectancy / (df_ex['PnL (%)'].std() / 100.0)) if df_ex['PnL (%)'].std() > 0 else 0.0
     else:
-        win_rate, expectancy, sqn = 0.0, 0.0, 0.0
+        trade_hit_rate, expectancy, sqn = 0.0, 0.0, 0.0
+
+    # --- Daily Reliability (% of active trading days ending in profit) ---
+    positive_days = (returns > 0).sum()
+    active_days = (returns != 0).sum()
+    daily_win_rate = (positive_days / active_days) if active_days > 0 else 0.0
 
     # Downside tail risk
     cvar_95 = returns[returns <= returns.quantile(0.05)].mean() * 100 if len(returns) > 20 else 0.0
@@ -779,7 +785,8 @@ def calculate_advanced_metrics(hist_df, df_ex=None):
         "Information Ratio": information_ratio, 
         "MAR Ratio": mar,
         "Profit Factor": profit_factor, 
-        "Trade Hit Rate": win_rate, 
+        "Win Rate (Daily)": daily_win_rate,
+        "Trade Hit Rate": trade_hit_rate, 
         "Expectancy": expectancy, 
         "SQN": sqn,
         "CVaR (95%)": cvar_95,
