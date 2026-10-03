@@ -707,10 +707,11 @@ def calculate_seasonality(df):
 def calculate_advanced_metrics(hist_df, df_ex=None):
     """
     Calculates deterministic, institutional-grade risk metrics.
-    df_ex (Trade Log) is strictly required for Expectancy and Trade Hit Rate.
-    hist_df is used for account-level returns and Daily Reliability.
+    Ensures benchmark returns (SPY) are aligned for true Beta and Information Ratio.
     """
-    if hist_df.empty: return {}
+    if hist_df.empty: 
+        return {}
+        
     df = hist_df.copy()
     df['daily_return'] = df['equity'].pct_change().fillna(0)
     returns = df['daily_return']
@@ -726,15 +727,15 @@ def calculate_advanced_metrics(hist_df, df_ex=None):
     
     df['peak'] = df['equity'].cummax()
     max_dd = ((df['equity'] - df['peak']) / df['peak']).min()
-    mar = (cagr / abs(max_dd)) if max_dd < 0 else 0 
+    mar = (cagr / abs(max_dd)) if max_dd < 0 else 0.0
 
-    # --- Sharpe Ratio (Arithmetic Annualization) ---
+    # Sharpe Ratio (Daily Excess vs 4% Cash Hurdle)
     daily_rf = 0.04 / 252
     excess_returns = returns - daily_rf
     volatility = returns.std() * np.sqrt(252)
     sharpe = (excess_returns.mean() * 252) / volatility if volatility > 0 else 0.0
     
-    # --- Sortino Ratio (Target Downside Deviation / RMS) ---
+    # Sortino Ratio (Downside RMS Dev)
     downside_squared = np.minimum(0, excess_returns) ** 2
     target_downside_dev = np.sqrt(downside_squared.mean()) * np.sqrt(252)
     sortino = (excess_returns.mean() * 252) / target_downside_dev if target_downside_dev > 0 else 0.0
@@ -743,18 +744,35 @@ def calculate_advanced_metrics(hist_df, df_ex=None):
     negative_sum = abs(returns[returns < 0].sum())
     profit_factor = (positive_sum / negative_sum) if negative_sum > 0 else float('inf')
 
-    # Calculate beta/information ratio if benchmark exists
-    if 'benchmark_return' in df.columns:
-        active_return = returns - df['benchmark_return']
+    # --- BENCHMARK ALIGNMENT (SPY) FOR BETA & INFORMATION RATIO ---
+    if 'benchmark_return' not in df.columns or df['benchmark_return'].abs().sum() == 0:
+        try:
+            start_str = (start_date - pd.Timedelta(days=5)).strftime('%Y-%m-%d')
+            spy_data = get_historical_spy(start_str)
+            if not spy_data.empty:
+                df['date_only'] = df['timestamp'].dt.tz_localize(None).dt.floor('D')
+                spy_data['date_only'] = spy_data.index
+                df = pd.merge(df, spy_data, on='date_only', how='left')
+                df['benchmark_return'] = df['spy_return'].fillna(0.0)
+                df.drop(columns=['date_only', 'spy_return'], inplace=True, errors='ignore')
+        except Exception:
+            pass
+
+    if 'benchmark_return' in df.columns and len(df) > 5:
+        aligned_bench = df['benchmark_return'].fillna(0.0)
+        active_return = returns - aligned_bench
         tracking_error = active_return.std() * np.sqrt(252)
-        information_ratio = (active_return.mean() * 252) / tracking_error if tracking_error > 1e-9 else 0.0
+        information_ratio = (active_return.mean() * 252) / tracking_error if tracking_error > 1e-6 else 0.0
         
-        bench_var = df['benchmark_return'].var()
-        beta_val = returns.cov(df['benchmark_return']) / bench_var if bench_var > 1e-9 else 0.0
+        bench_var = aligned_bench.var()
+        if bench_var > 1e-6:
+            beta_val = returns.cov(aligned_bench) / bench_var
+        else:
+            beta_val = 0.0
     else:
         information_ratio, beta_val = 0.0, 0.0
 
-    # --- Trade Hit Rate & Expectancy (from Trade Execution Logs) ---
+    # Trade Execution Metrics
     if df_ex is not None and not df_ex.empty and 'PnL (%)' in df_ex.columns:
         wins = df_ex[df_ex['PnL (%)'] > 0]['PnL (%)']
         losses = df_ex[df_ex['PnL (%)'] <= 0]['PnL (%)']
@@ -766,12 +784,10 @@ def calculate_advanced_metrics(hist_df, df_ex=None):
     else:
         trade_hit_rate, expectancy, sqn = 0.0, 0.0, 0.0
 
-    # --- Daily Reliability (% of active trading days ending in profit) ---
     positive_days = (returns > 0).sum()
     active_days = (returns != 0).sum()
     daily_win_rate = (positive_days / active_days) if active_days > 0 else 0.0
 
-    # Downside tail risk
     cvar_95 = returns[returns <= returns.quantile(0.05)].mean() * 100 if len(returns) > 20 else 0.0
 
     return {
@@ -1305,19 +1321,20 @@ hist_df_raw = get_portfolio_history(api)
 hist_df_adj = hist_df_raw.copy()
 roll_df, phys_df = pd.DataFrame(), pd.DataFrame() 
 
-
 if not hist_df_raw.empty and account:
-    if hist_df_raw['timestamp'].dt.tz is None: hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
+    if hist_df_raw['timestamp'].dt.tz is None: 
+        hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
     hist_df_raw = pd.concat([hist_df_raw, pd.DataFrame([{'timestamp': pd.Timestamp.now(tz='UTC'), 'equity': float(account['equity'])}])], ignore_index=True)
-    hist_df_adj = apply_twr_adjustments(hist_df_raw.copy())
+    hist_df_adj = apply_twr_adjustments(hist_df_raw.copy(), alpaca_cash_flows=clean_cash_flows)
 
+    # Attach SPY to hist_df_adj so downstream calculations inherit benchmark data
     spy_df = get_historical_spy(hist_df_adj['timestamp'].min().strftime('%Y-%m-%d'))
     if not spy_df.empty:
         hist_df_adj['date_only'] = hist_df_adj['timestamp'].dt.tz_localize(None).dt.floor('D')
         spy_df['date_only'] = spy_df.index
         hist_df_adj = pd.merge(hist_df_adj, spy_df, on='date_only', how='left')
         hist_df_adj['benchmark_return'] = hist_df_adj['spy_return'].fillna(0.0)
-        hist_df_adj.drop(columns=['date_only', 'spy_return'], inplace=True)
+        hist_df_adj.drop(columns=['date_only', 'spy_return'], inplace=True, errors='ignore')
 
     st.session_state['global_metrics'] = calculate_advanced_metrics(hist_df_adj)
     roll_df = calculate_rolling_edge(hist_df_adj, window=30)
@@ -1829,7 +1846,16 @@ with tab3:
         cutoff_28d = now_utc - pd.Timedelta(days=28)
         hist_28d = hist_df_adj[hist_df_adj['timestamp'] >= cutoff_28d].copy()
         
-        # Also pass df_ex (filtered for 28d) into the 28d metrics to ensure 28-day Expectancy computes correctly
+        # Ensure benchmark_return is present in the sliced dataframe
+        if 'benchmark_return' not in hist_28d.columns:
+            spy_subset = get_historical_spy(hist_28d['timestamp'].min().strftime('%Y-%m-%d'))
+            if not spy_subset.empty:
+                hist_28d['date_only'] = hist_28d['timestamp'].dt.tz_localize(None).dt.floor('D')
+                spy_subset['date_only'] = spy_subset.index
+                hist_28d = pd.merge(hist_28d, spy_subset, on='date_only', how='left')
+                hist_28d['benchmark_return'] = hist_28d['spy_return'].fillna(0.0)
+                hist_28d.drop(columns=['date_only', 'spy_return'], inplace=True, errors='ignore')
+
         df_ex_28d = df_ex[pd.to_datetime(df_ex['Exit_Time'], utc=True) >= cutoff_28d] if not df_ex.empty and 'Exit_Time' in df_ex.columns else None
         metrics_28d = calculate_advanced_metrics(hist_28d, df_ex_28d) if not hist_28d.empty else {}
 
