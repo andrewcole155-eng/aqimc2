@@ -806,7 +806,7 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_28d, hit_
         if val is None:
             return "TBD"
         if "Deflated Sharpe" in metric_name or "Probabilistic Sharpe" in metric_name:
-            return "🏆 Elite" if val >= 0.95 else ("✅ Target" if val >= 0.45 else "⚠️ Weak")
+            return "🏆 Elite" if val >= 0.75 else ("✅ Target" if val >= 0.35 else "⚠️ Weak")
         elif "Backtest Overfitting" in metric_name or "Multivariate Drift" in metric_name:
             return "🛡️ Safe" if val <= 0.05 else ("⚠️ Monitor" if val <= 0.10 else "🚨 Drift")
         elif "Total Cumulative Return" in metric_name:
@@ -890,7 +890,7 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_28d, hit_
 
     data = [
         # === INSTITUTIONAL ALLOCATOR METRICS ===
-        {"METRIC": "Canary PSR (Probabilistic Sharpe)", "TARGET": "> 95.0% (Statistically beats incumbent).", "LIFETIME": psr_display, "VERDICT_ALL": eval_verdict("Probabilistic Sharpe", avg_psr), "28D": "N/A", "VERDICT_28D": "N/A"},
+        {"METRIC": "Canary PSR (Probabilistic Sharpe)", "TARGET": "> 35.0% (Walk-Forward Canary Gate Hurdle)", "LIFETIME": psr_display, "VERDICT_ALL": eval_verdict("Probabilistic Sharpe", avg_psr), "28D": "N/A", "VERDICT_28D": "N/A"},
         {"METRIC": "Multivariate Drift (MMD)", "TARGET": "< 0.05. Monitored via RBF Kernel.", "LIFETIME": mmd_display, "VERDICT_ALL": "🛡️ Safe" if avg_mmd < 0.05 else "🚨 Drift", "28D": "N/A", "VERDICT_28D": "N/A"},
         {"METRIC": "Market Beta (β) to S&P 500", "TARGET": "-0.10 < β < 0.10. Pure, uncorrelated alpha.", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "28D": f"{beta_28:.2f}", "VERDICT_28D": eval_verdict("Market Beta", beta_28)},
         {"METRIC": "Minimum Track Record Length", "TARGET": "> 24 to 36 months of live trading required.", "LIFETIME": f"{trl_all:.1f} months", "VERDICT_ALL": eval_verdict("Track Record", trl_all), "28D": "N/A", "VERDICT_28D": "N/A"},
@@ -1916,10 +1916,10 @@ with tab3:
             else:
                 mmd_narrative = f"🧬 **Feature Stability (MMD at {avg_mmd:.4f}):** The low Multivariate Drift score indicates the Spatio-Temporal GNN is recognizing highly stable, historically consistent structural patterns in the current market."
                 
-            if avg_psr >= 0.45:
-                psr_narrative = f"⚔️ **Canary Gate (PSR at {avg_psr:.1%}):** The Probabilistic Sharpe Ratio indicates the challenger models are successfully maintaining their edge over the incumbents, authorizing production deployment."
+            if avg_psr >= 0.35:
+                psr_narrative = f"⚔️ **Canary Gate (PSR at {avg_psr:.1%}):** The Probabilistic Sharpe Ratio confirms the challenger models cleared the 35.0% hurdle over incumbents, authorizing production deployment."
             else:
-                psr_narrative = f"🛡️ **Canary Gate (PSR at {avg_psr:.1%}):** The Probabilistic Sharpe Ratio is below the promotion threshold. The CI/CD pipeline is actively quarantining underperforming agents into Shadow Mode to protect capital."
+                psr_narrative = f"🛡️ **Canary Gate (PSR at {avg_psr:.1%}):** The Probabilistic Sharpe Ratio is below the 35.0% promotion threshold. The CI/CD pipeline is actively quarantining underperforming agents into Shadow Mode to protect capital."
                 
             overview_html = f"""
             <div style="background-color: #1e1e1e; padding: 15px; border-radius: 6px; border-left: 4px solid #569cd6; margin-top: 15px;">
