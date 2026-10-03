@@ -883,44 +883,33 @@ def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_28d, hit_
 
     data = [
         # === INSTITUTIONAL ALLOCATOR METRICS ===
-        {"METRIC": "Canary PSR (Probabilistic Sharpe)", "TARGET": "> 95.0% (Statistically beats incumbent).", "LIFETIME": psr_display, "VERDICT_ALL": eval_verdict("Probabilistic Sharpe", avg_psr), "28D": "N/A", "VERDICT_28D": "N/A", "PRIORITY": "Serious Concern"},
-        {"METRIC": "Multivariate Drift (MMD)", "TARGET": "< 0.05. Monitored via RBF Kernel.", "LIFETIME": mmd_display, "VERDICT_ALL": "🛡️ Safe" if avg_mmd < 0.05 else "🚨 Drift", "28D": "N/A", "VERDICT_28D": "N/A", "PRIORITY": "Serious Concern"},
-        {"METRIC": "Market Beta (β) to S&P 500", "TARGET": "-0.10 < β < 0.10. Pure, uncorrelated alpha.", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "28D": f"{beta_28:.2f}", "VERDICT_28D": eval_verdict("Market Beta", beta_28), "PRIORITY": "High"},
-        {"METRIC": "Minimum Track Record Length", "TARGET": "> 24 to 36 months of live trading required.", "LIFETIME": f"{trl_all:.1f} months", "VERDICT_ALL": eval_verdict("Track Record", trl_all), "28D": "N/A", "VERDICT_28D": "N/A", "PRIORITY": "Medium"},
-        {"METRIC": "Capacity (Maximum AUM)", "TARGET": "> $100M for institutional allocators.", "LIFETIME": "Est. >$250M", "VERDICT_ALL": "✅ High Liq.", "28D": "N/A", "VERDICT_28D": "N/A", "PRIORITY": "High"},
-        {"METRIC": "Annualized Turnover", "TARGET": "Dependent on alpha horizon, maintain low friction.", "LIFETIME": f"{turnover_all:.1f} trades/yr", "VERDICT_ALL": "✅ Optimal", "28D": f"{trades_28d} trades", "VERDICT_28D": "✅ Optimal", "PRIORITY": "Medium"},
+        {"METRIC": "Canary PSR (Probabilistic Sharpe)", "TARGET": "> 95.0% (Statistically beats incumbent).", "LIFETIME": psr_display, "VERDICT_ALL": eval_verdict("Probabilistic Sharpe", avg_psr), "28D": "N/A", "VERDICT_28D": "N/A"},
+        {"METRIC": "Multivariate Drift (MMD)", "TARGET": "< 0.05. Monitored via RBF Kernel.", "LIFETIME": mmd_display, "VERDICT_ALL": "🛡️ Safe" if avg_mmd < 0.05 else "🚨 Drift", "28D": "N/A", "VERDICT_28D": "N/A"},
+        {"METRIC": "Market Beta (β) to S&P 500", "TARGET": "-0.10 < β < 0.10. Pure, uncorrelated alpha.", "LIFETIME": f"{beta_all:.2f}", "VERDICT_ALL": eval_verdict("Market Beta", beta_all), "28D": f"{beta_28:.2f}", "VERDICT_28D": eval_verdict("Market Beta", beta_28)},
+        {"METRIC": "Minimum Track Record Length", "TARGET": "> 24 to 36 months of live trading required.", "LIFETIME": f"{trl_all:.1f} months", "VERDICT_ALL": eval_verdict("Track Record", trl_all), "28D": "N/A", "VERDICT_28D": "N/A"},
+        {"METRIC": "Capacity (Maximum AUM)", "TARGET": "> $100M for institutional allocators.", "LIFETIME": "Est. >$250M", "VERDICT_ALL": "✅ High Liq.", "28D": "N/A", "VERDICT_28D": "N/A"},
+        {"METRIC": "Annualized Turnover", "TARGET": "Dependent on alpha horizon, maintain low friction.", "LIFETIME": f"{turnover_all:.1f} trades/yr", "VERDICT_ALL": "✅ Optimal", "28D": f"{trades_28d} trades", "VERDICT_28D": "✅ Optimal"},
 
         # === CORE RETURN & EDGE ===
-        {"METRIC": "Total Cumulative Return", "TARGET": "Absolute historical growth > 0%", "LIFETIME": f"{tot_all:.1%}", "VERDICT_ALL": eval_verdict("Total Cumulative Return", tot_all), "28D": f"{tot_28:.1%}", "VERDICT_28D": eval_verdict("Total Cumulative Return", tot_28), "PRIORITY": "High"},
-        {"METRIC": "CAGR (Account)", "TARGET": "> 20% Annualized compounding rate", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "28D": f"{cagr_28:.1%}", "VERDICT_28D": eval_verdict("CAGR", cagr_28), "PRIORITY": "High"},
-        {"METRIC": "System Quality (SQN)", "TARGET": "> 1.6 Trade edge vs. variance", "LIFETIME": f"{sqn_all:.2f}", "VERDICT_ALL": eval_verdict("SQN", sqn_all), "28D": f"{sqn_28:.2f}", "VERDICT_28D": eval_verdict("SQN", sqn_28), "PRIORITY": "High"},
-        {"METRIC": "Expectancy (Edge)", "TARGET": "> 0% Expected net gain per trade", "LIFETIME": f"{exp_all:.2%}", "VERDICT_ALL": eval_verdict("Expectancy", exp_all), "28D": f"{exp_28:.2%}", "VERDICT_28D": eval_verdict("Expectancy", exp_28), "PRIORITY": "High"},
-        {"METRIC": "Profit Factor", "TARGET": "> 1.5 Gross profit divided by gross loss", "LIFETIME": f"{pf_all:.2f}", "VERDICT_ALL": eval_verdict("Profit Factor", pf_all), "28D": f"{pf_28:.2f}", "VERDICT_28D": eval_verdict("Profit Factor", pf_28), "PRIORITY": "High"},
-        {"METRIC": "Trade Hit Rate", "TARGET": "40-50% Win Rate of closed trades", "LIFETIME": f"{hit_rate_all:.0%} ({trades_all})", "VERDICT_ALL": eval_verdict("Trade Hit Rate", hit_rate_all), "28D": f"{hit_rate_28d:.0%} ({trades_28d})", "VERDICT_28D": eval_verdict("Trade Hit Rate", hit_rate_28d), "PRIORITY": "Medium"},
-        {"METRIC": "Daily Reliability", "TARGET": "50-55% of days ending in profit", "LIFETIME": f"{wr_all:.0%}", "VERDICT_ALL": eval_verdict("Daily Reliability", wr_all), "28D": f"{wr_28:.0%}", "VERDICT_28D": eval_verdict("Daily Reliability", wr_28), "PRIORITY": "Medium"},
+        {"METRIC": "Total Cumulative Return", "TARGET": "Absolute historical growth > 0%", "LIFETIME": f"{tot_all:.1%}", "VERDICT_ALL": eval_verdict("Total Cumulative Return", tot_all), "28D": f"{tot_28:.1%}", "VERDICT_28D": eval_verdict("Total Cumulative Return", tot_28)},
+        {"METRIC": "CAGR (Account)", "TARGET": "> 20% Annualized compounding rate", "LIFETIME": f"{cagr_all:.1%}", "VERDICT_ALL": eval_verdict("CAGR", cagr_all), "28D": f"{cagr_28:.1%}", "VERDICT_28D": eval_verdict("CAGR", cagr_28)},
+        {"METRIC": "System Quality (SQN)", "TARGET": "> 1.6 Trade edge vs. variance", "LIFETIME": f"{sqn_all:.2f}", "VERDICT_ALL": eval_verdict("SQN", sqn_all), "28D": f"{sqn_28:.2f}", "VERDICT_28D": eval_verdict("SQN", sqn_28)},
+        {"METRIC": "Expectancy (Edge)", "TARGET": "> 0% Expected net gain per trade", "LIFETIME": f"{exp_all:.2%}", "VERDICT_ALL": eval_verdict("Expectancy", exp_all), "28D": f"{exp_28:.2%}", "VERDICT_28D": eval_verdict("Expectancy", exp_28)},
+        {"METRIC": "Profit Factor", "TARGET": "> 1.5 Gross profit divided by gross loss", "LIFETIME": f"{pf_all:.2f}", "VERDICT_ALL": eval_verdict("Profit Factor", pf_all), "28D": f"{pf_28:.2f}", "VERDICT_28D": eval_verdict("Profit Factor", pf_28)},
+        {"METRIC": "Trade Hit Rate", "TARGET": "40-50% Win Rate of closed trades", "LIFETIME": f"{hit_rate_all:.0%} ({trades_all})", "VERDICT_ALL": eval_verdict("Trade Hit Rate", hit_rate_all), "28D": f"{hit_rate_28d:.0%} ({trades_28d})", "VERDICT_28D": eval_verdict("Trade Hit Rate", hit_rate_28d)},
+        {"METRIC": "Daily Reliability", "TARGET": "50-55% of days ending in profit", "LIFETIME": f"{wr_all:.0%}", "VERDICT_ALL": eval_verdict("Daily Reliability", wr_all), "28D": f"{wr_28:.0%}", "VERDICT_28D": eval_verdict("Daily Reliability", wr_28)},
         
         # === CORE RISK & RATIOS ===
-        {"METRIC": "Maximum Drawdown", "TARGET": "< 10% - 15% depending on volatility profile.", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Maximum Drawdown", mdd_all), "28D": f"{mdd_28:.1%}", "VERDICT_28D": eval_verdict("Maximum Drawdown", mdd_28), "PRIORITY": "High"},
-        {"METRIC": "Expected Shortfall (CVaR 95%)", "TARGET": "Must remain strictly bounded within predefined risk tolerance.", "LIFETIME": f"{cvar_all:.2f}%", "VERDICT_ALL": eval_verdict("Expected Shortfall", cvar_all), "28D": f"{cvar_28:.2f}%", "VERDICT_28D": eval_verdict("Expected Shortfall", cvar_28), "PRIORITY": "Medium"},
-        {"METRIC": "Sharpe Ratio", "TARGET": "> 1.5 Return per unit of total risk", "LIFETIME": f"{shp_all:.2f}", "VERDICT_ALL": eval_verdict("Sharpe", shp_all), "28D": f"{shp_28:.2f}", "VERDICT_28D": eval_verdict("Sharpe", shp_28), "PRIORITY": "High"},
-        {"METRIC": "Sortino Ratio", "TARGET": "> 2.0 (Strong) to > 3.0 (Exceptional).", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "28D": f"{srt_28:.2f}", "VERDICT_28D": eval_verdict("Sortino", srt_28), "PRIORITY": "High"},
-        {"METRIC": "Calmar Ratio (3-Year)", "TARGET": "> 1.0 (Acceptable) to > 2.0 (Strong).", "LIFETIME": f"{calmar_all:.2f}", "VERDICT_ALL": eval_verdict("Calmar", calmar_all), "28D": f"{calmar_28:.2f}", "VERDICT_28D": eval_verdict("Calmar", calmar_28), "PRIORITY": "High"},
-        {"METRIC": "Information Ratio (vs SPY)", "TARGET": "> 0.5. Alpha generated vs benchmark.", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "28D": f"{ir_28:.2f}", "VERDICT_28D": eval_verdict("Information Ratio", ir_28), "PRIORITY": "High"},
+        {"METRIC": "Maximum Drawdown", "TARGET": "< 10% - 15% depending on volatility profile.", "LIFETIME": f"{mdd_all:.1%}", "VERDICT_ALL": eval_verdict("Maximum Drawdown", mdd_all), "28D": f"{mdd_28:.1%}", "VERDICT_28D": eval_verdict("Maximum Drawdown", mdd_28)},
+        {"METRIC": "Expected Shortfall (CVaR 95%)", "TARGET": "Must remain strictly bounded within predefined risk tolerance.", "LIFETIME": f"{cvar_all:.2f}%", "VERDICT_ALL": eval_verdict("Expected Shortfall", cvar_all), "28D": f"{cvar_28:.2f}%", "VERDICT_28D": eval_verdict("Expected Shortfall", cvar_28)},
+        {"METRIC": "Sharpe Ratio", "TARGET": "> 1.5 Return per unit of total risk", "LIFETIME": f"{shp_all:.2f}", "VERDICT_ALL": eval_verdict("Sharpe", shp_all), "28D": f"{shp_28:.2f}", "VERDICT_28D": eval_verdict("Sharpe", shp_28)},
+        {"METRIC": "Sortino Ratio", "TARGET": "> 2.0 (Strong) to > 3.0 (Exceptional).", "LIFETIME": f"{srt_all:.2f}", "VERDICT_ALL": eval_verdict("Sortino", srt_all), "28D": f"{srt_28:.2f}", "VERDICT_28D": eval_verdict("Sortino", srt_28)},
+        {"METRIC": "Calmar Ratio (3-Year)", "TARGET": "> 1.0 (Acceptable) to > 2.0 (Strong).", "LIFETIME": f"{calmar_all:.2f}", "VERDICT_ALL": eval_verdict("Calmar", calmar_all), "28D": f"{calmar_28:.2f}", "VERDICT_28D": eval_verdict("Calmar", calmar_28)},
+        {"METRIC": "Information Ratio (vs SPY)", "TARGET": "> 0.5. Alpha generated vs benchmark.", "LIFETIME": f"{ir_all:.2f}", "VERDICT_ALL": eval_verdict("Information Ratio", ir_all), "28D": f"{ir_28:.2f}", "VERDICT_28D": eval_verdict("Information Ratio", ir_28)},
     ]
     
     df = pd.DataFrame(data)
-
-    # Custom Multi-Level Sorting Logic
-    priority_mapping = {
-        "Serious Concern": 0,
-        "High": 1,
-        "Medium": 2,
-        "Low": 3
-    }
-    df['Priority_Rank'] = df['PRIORITY'].map(priority_mapping)
-    df = df.sort_values(by=['Priority_Rank', 'METRIC'], ascending=[True, True])
-
-    ordered_columns = ['METRIC', 'TARGET', 'LIFETIME', 'VERDICT_ALL', '28D', 'VERDICT_28D', 'PRIORITY']
+    ordered_columns = ['METRIC', 'TARGET', 'LIFETIME', 'VERDICT_ALL', '28D', 'VERDICT_28D']
     return df[ordered_columns].reset_index(drop=True)
 
 def calculate_institutional_score(metrics):
@@ -1892,7 +1881,6 @@ with tab3:
                     "28D": st.column_config.TextColumn("Last 28 Days", width="small"),
                     "TARGET": st.column_config.TextColumn("Institutional Benchmark / Target Range", width="large"),
                     "VERDICT_28D": st.column_config.TextColumn("28D Assessment", width="small"),
-                    "PRIORITY": st.column_config.TextColumn("Priority", width="small"),
                 },
                 height=720
             )
