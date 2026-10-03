@@ -1843,7 +1843,10 @@ with tab3:
         # Build Scorecard DataFrame
         scorecard_df = create_scorecard_df(metrics, hit_rate_all, trades_all, metrics_28d, hit_rate_28d, trades_28d, offline_state, model_health)
 
-        inst_score = calculate_institutional_score(metrics)
+        # Base the gauge strictly on 28-Day metrics (fallback to lifetime if 28-day lacks data)
+        active_metrics = metrics_28d if metrics_28d and metrics_28d.get('Total Return') else metrics
+        inst_score = calculate_institutional_score(active_metrics)
+        
         valid_cagr = metrics.get("CAGR", 0.0)
         
         dd_df = calculate_drawdown(hist_df_adj) 
@@ -1858,7 +1861,7 @@ with tab3:
         with col_gauge:
             fig_gauge = go.Figure(go.Indicator(
                 mode = "gauge+number", value = inst_score, domain = {'x': [0, 1], 'y': [0, 1]},
-                title = {'text': "Strategy Grade", 'font': {'size': 20, 'color': '#e0e0e0'}},
+                title = {'text': "Strategy Grade (28D)", 'font': {'size': 20, 'color': '#e0e0e0'}},
                 number = {'suffix': "/100", 'font': {'color': '#e0e0e0'}},
                 gauge = {
                     'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "#333"},
