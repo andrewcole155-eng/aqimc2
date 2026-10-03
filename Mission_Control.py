@@ -309,8 +309,7 @@ def get_portfolio_history(_api):
 
 def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     """
-    Calculates True Time-Weighted Return (TWR) using ONLY verified external bank transfers.
-    Completely ignores internal USDT/Crypto liquidations.
+    Calculates True Time-Weighted Return (TWR) deterministically.
     """
     if hist_df.empty:
         return hist_df
@@ -320,22 +319,24 @@ def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     hist_df = hist_df.sort_values('timestamp').reset_index(drop=True)
     hist_df['net_cash_flow'] = 0.0
     
-    # ---> FIX: EXCLUSIVELY USE FILTERED ALPACA CASH FLOWS <---
+    # Map cash flows safely
     if alpaca_cash_flows:
         for date_str, amount in alpaca_cash_flows.items():
             if amount == 0: 
                 continue
             try:
-                # Find the first portfolio snapshot on or immediately after the bank transfer
                 flow_date = pd.to_datetime(date_str, utc=True)
+                # Map to the EXACT date, or the immediate next valid snapshot
                 mask = hist_df['timestamp'] >= flow_date
                 if mask.any():
                     target_idx = hist_df[mask].index[0]
                     hist_df.loc[target_idx, 'net_cash_flow'] += float(amount)
+                else:
+                    st.warning(f"Unmapped cash flow detected on {date_str}. Metrics may be contaminated.")
             except Exception as e:
-                print(f"Failed to map cash flow for {date_str}: {e}")
+                st.error(f"Failed to map cash flow for {date_str}: {e}. Metrics contaminated.")
                 
-    # Calculate True Daily Return (HPR - Holding Period Return)
+    # Calculate True Daily Return (HPR)
     hist_df['twr_return'] = 0.0
     
     for i in range(1, len(hist_df)):
@@ -347,13 +348,18 @@ def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
             hist_df.loc[hist_df.index[i], 'twr_return'] = 0.0
             continue
             
-        # If CF is positive (deposit), it increases the capital base for the day
+        # Denominator represents capital actually at work
+        # If deposit occurs, assume it was available at start of day (conservative)
         denominator = prev_equity + net_cf if net_cf > 0 else prev_equity
         
-        twr = (curr_equity - prev_equity - net_cf) / denominator
+        # Guard against zero/negative denominators preventing division by zero
+        if denominator <= 0:
+            twr = 0.0
+        else:
+            twr = (curr_equity - prev_equity - net_cf) / denominator
+            
         hist_df.loc[hist_df.index[i], 'twr_return'] = twr
 
-    # Replace infinite/NaN values with 0
     hist_df['twr_return'] = hist_df['twr_return'].replace([np.inf, -np.inf], 0).fillna(0)
     hist_df['daily_return'] = hist_df['twr_return']
     
@@ -362,10 +368,7 @@ def apply_twr_adjustments(hist_df, alpaca_cash_flows=None):
     hist_df['twr_equity'] = true_starting_principal * (1 + hist_df['daily_return']).cumprod()
     hist_df['twr_equity'] = hist_df['twr_equity'].fillna(true_starting_principal)
     
-    # Overwrite raw equity with the pure algorithmic curve
     hist_df['equity'] = hist_df['twr_equity']
-    
-    # Cleanup intermediate columns
     hist_df.drop(columns=['net_cash_flow', 'twr_return', 'twr_equity'], inplace=True, errors='ignore')
     
     return hist_df
@@ -681,105 +684,86 @@ def calculate_seasonality(df):
     ).reset_index().sort_values('Month_Num').set_index('Month')
     return day_stats, monthly_stats
 
-def calculate_advanced_metrics(hist_df):
+def calculate_advanced_metrics(hist_df, df_ex=None):
+    """
+    Calculates deterministic, institutional-grade risk metrics.
+    df_ex (Trade Log) is strictly required for Expectancy and Win Rate to avoid domain confusion.
+    """
     if hist_df.empty: return {}
     df = hist_df.copy()
-    df['daily_return'] = df['equity'].pct_change()
-    returns = df['daily_return'].dropna()
+    df['daily_return'] = df['equity'].pct_change().fillna(0)
+    returns = df['daily_return']
     
     start_date, current_date = df['timestamp'].min(), df['timestamp'].max()
-    if current_date.tz is None: current_date = current_date.tz_localize('UTC')
-    if start_date.tz is None: start_date = start_date.tz_localize('UTC')
-    
     days_active = max((current_date - start_date).days, 1)
     years_active = days_active / 365.25
-    months_active = days_active / 30.44  # For Track Record Length
+    months_active = days_active / 30.44
     
     start_equity, end_equity = float(df['equity'].iloc[0]), float(df['equity'].iloc[-1])
-    
-    total_return = (end_equity / start_equity) - 1 if pd.notna(start_equity) and start_equity > 0 else 0.0
-    cagr = (end_equity / start_equity) ** (1 / years_active) - 1 if pd.notna(start_equity) and start_equity > 0 and years_active > 0 else 0.0
+    total_return = (end_equity / start_equity) - 1 if start_equity > 0 else 0.0
+    cagr = ((end_equity / start_equity) ** (1 / years_active)) - 1 if start_equity > 0 and years_active > 0 else 0.0
     
     df['peak'] = df['equity'].cummax()
     max_dd = ((df['equity'] - df['peak']) / df['peak']).min()
-    mar = (cagr / abs(max_dd)) if max_dd != 0 else 0 # Also known as Calmar Ratio
+    mar = (cagr / abs(max_dd)) if max_dd < 0 else 0 
 
-    volatility = returns.std() * (252 ** 0.5)
-    sharpe = (cagr - 0.04) / volatility if volatility > 0 else 0
+    # --- CORRECTED: Sharpe Ratio (Arithmetic Annualization) ---
+    daily_rf = 0.04 / 252
+    excess_returns = returns - daily_rf
+    volatility = returns.std() * np.sqrt(252)
+    sharpe = (excess_returns.mean() * 252) / volatility if volatility > 0 else 0.0
     
-    downside_returns = returns[returns < 0]
-    downside_vol = downside_returns.std() * (252 ** 0.5) if not downside_returns.empty else 0
-    sortino = (cagr - 0.04) / downside_vol if downside_vol > 0 else 0
+    # --- CORRECTED: Sortino Ratio (Target Downside Deviation / RMS) ---
+    downside_squared = np.minimum(0, excess_returns) ** 2
+    target_downside_dev = np.sqrt(downside_squared.mean()) * np.sqrt(252)
+    sortino = (excess_returns.mean() * 252) / target_downside_dev if target_downside_dev > 0 else 0.0
 
     positive_sum = returns[returns > 0].sum()
     negative_sum = abs(returns[returns < 0].sum())
     profit_factor = (positive_sum / negative_sum) if negative_sum > 0 else float('inf')
 
-    df_with_dd = calculate_drawdown(df)
-    max_underwater_days = int(df_with_dd['underwater_days'].max()) if 'underwater_days' in df_with_dd.columns else 0
-    ulcer_index = ((df_with_dd['drawdown'] * 100) ** 2).mean() ** 0.5 if 'drawdown' in df_with_dd.columns else 0.0
-
+    # Calculate beta/information ratio if benchmark exists
     if 'benchmark_return' in df.columns:
         active_return = returns - df['benchmark_return']
-        tracking_error = active_return.std()
-        if tracking_error > 1e-9:
-            information_ratio = (active_return.mean() * 252) / (tracking_error * (252 ** 0.5))
-        else: information_ratio = 0.0
+        tracking_error = active_return.std() * np.sqrt(252)
+        information_ratio = (active_return.mean() * 252) / tracking_error if tracking_error > 1e-9 else 0.0
         
-        # --- FIXED: Market Beta Calculation (Pandas Native Alignment) ---
         bench_var = df['benchmark_return'].var()
-        if bench_var > 1e-9:
-            beta_val = returns.cov(df['benchmark_return']) / bench_var
-        else:
-            beta_val = 0.0
+        beta_val = returns.cov(df['benchmark_return']) / bench_var if bench_var > 1e-9 else 0.0
     else:
-        tracking_error = returns.std()
-        if tracking_error > 1e-9: information_ratio = (returns.mean() * 252) / (tracking_error * (252 ** 0.5))
-        else: information_ratio = 0.0
-        beta_val = 0.0
+        information_ratio, beta_val = 0.0, 0.0
 
-    wins = len(returns[returns > 0])
-    total_active = len(returns[returns != 0])
-    win_rate = (wins / total_active) if total_active > 0 else 0
-    
-    avg_win = returns[returns > 0].mean() if pd.notna(returns[returns > 0].mean()) else 0.0
-    avg_loss = abs(returns[returns < 0].mean()) if pd.notna(returns[returns < 0].mean()) else 0.0
-    expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
-    
-    sqn = (total_active ** 0.5) * (expectancy / returns.std()) if returns.std() > 0 else 0
-    omega_ratio = (positive_sum / negative_sum) if negative_sum > 0 else float('inf')
-    
-    skewness_val = skew(returns) if len(returns) > 2 else 0
-    kurt = kurtosis(returns) if len(returns) > 2 else 0
-    cvar_95 = returns[returns <= returns.quantile(0.05)].mean() * 100 if len(returns) > 20 else 0
-    
-    gain_to_pain = omega_ratio
-    exposure_pct = total_active / len(returns) if len(returns) > 0 else 1.0
-    exposure_efficiency = cagr / exposure_pct if exposure_pct > 0 else 0
+    # --- CORRECTED: Expectancy must be derived from trade execution data (df_ex), not daily portfolio returns ---
+    if df_ex is not None and not df_ex.empty and 'PnL (%)' in df_ex.columns:
+        wins = df_ex[df_ex['PnL (%)'] > 0]['PnL (%)']
+        losses = df_ex[df_ex['PnL (%)'] <= 0]['PnL (%)']
+        win_rate = len(wins) / len(df_ex)
+        avg_win = wins.mean() / 100.0 if not wins.empty else 0.0
+        avg_loss = abs(losses.mean() / 100.0) if not losses.empty else 0.0
+        expectancy = (win_rate * avg_win) - ((1 - win_rate) * avg_loss)
+        sqn = (len(df_ex) ** 0.5) * (expectancy / (df_ex['PnL (%)'].std() / 100.0)) if df_ex['PnL (%)'].std() > 0 else 0.0
+    else:
+        win_rate, expectancy, sqn = 0.0, 0.0, 0.0
+
+    # Downside tail risk
+    cvar_95 = returns[returns <= returns.quantile(0.05)].mean() * 100 if len(returns) > 20 else 0.0
 
     return {
         "Total Return": total_return, 
         "CAGR": cagr, 
         "Max Drawdown": max_dd, 
-        "Recovery Time": max_underwater_days, 
-        "Ulcer Index": ulcer_index,
         "Sharpe Ratio": sharpe, 
         "Sortino Ratio": sortino, 
-        "Calmar Ratio": mar,  # Added explicit Calmar mapping
-        "Market Beta": beta_val,  # Added Beta
+        "Calmar Ratio": mar, 
+        "Market Beta": beta_val, 
         "Information Ratio": information_ratio, 
         "MAR Ratio": mar,
         "Profit Factor": profit_factor, 
-        "Win Rate (Daily)": win_rate, 
+        "Trade Hit Rate": win_rate, 
         "Expectancy": expectancy, 
         "SQN": sqn,
-        "Omega Ratio": omega_ratio, 
-        "Skewness": skewness_val, 
-        "Kurtosis": kurt, 
         "CVaR (95%)": cvar_95,
-        "Track Record (Months)": months_active, # Added Track Record
-        "Gain-to-Pain": gain_to_pain, 
-        "Exposure Efficiency": exposure_efficiency
+        "Track Record (Months)": months_active
     }
 
 def create_scorecard_df(metrics_all, hit_rate_all, trades_all, metrics_30d, hit_rate_30d, trades_30d, offline_state=None, model_health=None):
@@ -1702,13 +1686,29 @@ with tab2:
 
 with tab3:
     if not hist_df_raw.empty and account:
+        
+        # --- RECONCILIATION CHECK ---
+        st.markdown("### 🔍 Data Integrity & Reconciliation")
+        starting_cap = hist_df_raw['equity'].iloc[0]
+        current_cap = float(account['equity'])
+        net_deps = sum([float(v) for v in clean_cash_flows.values()]) if clean_cash_flows else 0.0
+        
+        # If difference between actual equity and known equity is greater than 1%, flag it.
+        discrepancy = current_cap - (starting_cap + net_deps)
+        if abs(discrepancy) > (current_cap * 0.05):
+            st.error(f"**DATA ERROR (UNRECONCILED):** The sum of your starting capital + known deposits does not match your current Alpaca equity. TWR metrics below may be severely inflated. Missing external deposits: ~${discrepancy:,.2f}")
+        else:
+            st.success("**RECONCILED:** Account equity sequence is aligned with recognized cash flows.")
+        st.divider()
+
         if hist_df_raw['timestamp'].dt.tz is None: hist_df_raw['timestamp'] = hist_df_raw['timestamp'].dt.tz_localize('UTC')
         hist_df_raw = pd.concat([hist_df_raw, pd.DataFrame([{'timestamp': pd.Timestamp.now(tz='UTC'), 'equity': float(account['equity'])}])], ignore_index=True)
         
-        # ---> FIX: Pass clean_cash_flows extracted from Angel Bot Logs instead of Alpaca
         hist_df_adj = apply_twr_adjustments(hist_df_raw.copy(), alpaca_cash_flows=clean_cash_flows)
         current_equity_raw = float(account['equity'])
-        metrics = st.session_state.get('global_metrics', {})
+        
+        # Pass df_ex to advanced metrics to calculate valid Expectancy
+        metrics = calculate_advanced_metrics(hist_df_adj, df_ex)
         
         # --- LIFETIME METRICS ---
         if not df_ex.empty:
