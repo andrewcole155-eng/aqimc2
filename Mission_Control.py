@@ -1882,12 +1882,28 @@ with tab3:
         active_metrics = metrics_28d if metrics_28d and metrics_28d.get('Total Return') else metrics
         inst_score = calculate_institutional_score(active_metrics)
         
-        valid_cagr = metrics.get("CAGR", 0.0)
-        
         dd_df = calculate_drawdown(hist_df_adj) 
         day_stats, monthly_stats = calculate_seasonality(hist_df_adj)
-        projection_rate = manual_cagr if use_manual_cagr else valid_cagr
         
+        # --- FIX: Route the correct CAGR to the projections engine based on sidebar toggle ---
+        cagr_all_time = metrics.get("CAGR", 0.0)
+        cagr_28d = metrics_28d.get('CAGR', 0.0)
+        
+        if cagr_source == "28-Day Regime (Recent)":
+            projection_rate = cagr_28d
+            proj_label = "28D Regime"
+        elif cagr_source == "Manual Override":
+            projection_rate = manual_cagr
+            proj_label = "Manual"
+        else:
+            projection_rate = cagr_all_time
+            proj_label = "Lifetime"
+        
+        # Fallback to Lifetime if 28-day CAGR is not yet calculable
+        if projection_rate == 0.0 and cagr_source == "28-Day Regime (Recent)":
+             projection_rate = cagr_all_time
+             proj_label = "Lifetime (28D Unavailable)"
+             
         inception_dt, starting_principal = hist_df_raw['timestamp'].min(), hist_df_raw['equity'].iloc[0]
         proj_df = calculate_future_projections(inception_dt, starting_principal, projection_rate)
 
@@ -2188,25 +2204,6 @@ with tab3:
         else: st.caption("Waiting for SPY historical data to populate macro charts...")
 
         st.divider()
-        
-        # --- FIX: Route the correct CAGR to the projections engine based on sidebar toggle ---
-        cagr_all_time = metrics.get("CAGR", 0.0)
-        cagr_28d = metrics_28d.get('CAGR', 0.0)
-        
-        if cagr_source == "28-Day Regime (Recent)":
-            projection_rate = cagr_28d
-            proj_label = "28D Regime"
-        elif cagr_source == "Manual Override":
-            projection_rate = manual_cagr
-            proj_label = "Manual"
-        else:
-            projection_rate = cagr_all_time
-            proj_label = "Lifetime"
-        
-        # Fallback to Lifetime if 28-day CAGR is not yet calculable
-        if projection_rate == 0.0 and cagr_source == "28-Day Regime (Recent)":
-             projection_rate = cagr_all_time
-             proj_label = "Lifetime (28D Unavailable)"
         
         st.markdown(f"### 🔮 Actuals vs. Projections (Based on {proj_label} CAGR: {projection_rate:.1%})")
         st.caption("Tracking live execution against the mathematical baseline to eliminate emotional bias during drawdown cycles.")
