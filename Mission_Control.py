@@ -2206,7 +2206,7 @@ with tab3:
         st.divider()
         
         st.markdown(f"### 🔮 Actuals vs. Projections (Based on {proj_label} CAGR: {projection_rate:.1%})")
-        st.caption("Tracking live execution against the mathematical baseline to eliminate emotional bias during drawdown cycles.")
+        st.caption("Tracking live execution against the mathematical baseline to eliminate emotional bias during drawdown cycles")
         
         if not proj_df.empty:
             c_p1, c_p2 = st.columns([2, 1])
