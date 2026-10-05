@@ -110,7 +110,8 @@ def fetch_timescaledb_telemetry():
             port=os.environ.get("DB_PORT", "5432"),
             user=os.environ.get("DB_USER", "aqi_admin"),
             password=os.environ.get("AQI_DB_PASSWORD", "aqi_secure_db_pass_2026"),
-            dbname=os.environ.get("DB_NAME", "aqi_telemetry")
+            dbname=os.environ.get("DB_NAME", "aqi_telemetry"),
+            connect_timeout=3  # <--- FIX: Prevents infinite app hangs if DB is unreachable
         )
         
         query = """
