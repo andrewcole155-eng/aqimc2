@@ -1226,8 +1226,17 @@ with st.sidebar:
     transmit_manual_directives(sys_halt, sys_sizing)
     st.divider()
     st.subheader("🔮 Projection Tuning")
-    use_manual_cagr = st.checkbox("Manual CAGR Override")
-    manual_cagr = st.slider("Target CAGR %", 0, 100, 25) / 100
+    
+    # --- FIX: Dynamic CAGR Projection Toggle ---
+    cagr_source = st.radio(
+        "Forecast Baseline", 
+        ["28-Day Regime (Recent)", "All-Time (Lifetime)", "Manual Override"],
+        index=0,
+        help="Select which CAGR to feed into the 20-year projections and Monte Carlo simulations."
+    )
+    
+    manual_cagr = st.slider("Manual CAGR %", 0, 100, 25) / 100 if cagr_source == "Manual Override" else 0.0
+    
     if st.button("Force Refresh Now", type="primary"): st.cache_data.clear(); st.rerun()
 
 # === DASHBOARD LOGIC ===
@@ -2180,8 +2189,24 @@ with tab3:
 
         st.divider()
         
-        projection_rate = manual_cagr if use_manual_cagr else valid_cagr
-        proj_label = "Manual" if use_manual_cagr else "Adj."
+        # --- FIX: Route the correct CAGR to the projections engine based on sidebar toggle ---
+        cagr_all_time = metrics.get("CAGR", 0.0)
+        cagr_28d = metrics_28d.get('CAGR', 0.0)
+        
+        if cagr_source == "28-Day Regime (Recent)":
+            projection_rate = cagr_28d
+            proj_label = "28D Regime"
+        elif cagr_source == "Manual Override":
+            projection_rate = manual_cagr
+            proj_label = "Manual"
+        else:
+            projection_rate = cagr_all_time
+            proj_label = "Lifetime"
+        
+        # Fallback to Lifetime if 28-day CAGR is not yet calculable
+        if projection_rate == 0.0 and cagr_source == "28-Day Regime (Recent)":
+             projection_rate = cagr_all_time
+             proj_label = "Lifetime (28D Unavailable)"
         
         st.markdown(f"### 🔮 Actuals vs. Projections (Based on {proj_label} CAGR: {projection_rate:.1%})")
         st.caption("Tracking live execution against the mathematical baseline to eliminate emotional bias during drawdown cycles.")
